@@ -143,7 +143,7 @@ export type TradeRecord = {
   totalAmount: number;
 };
 
-type AppState = {
+export type AppState = {
   records: FinancialRecord[];
   aiPlan: AIPlan | null;
   actuals: ActualRecord[];

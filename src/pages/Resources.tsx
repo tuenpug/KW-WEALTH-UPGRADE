@@ -464,6 +464,7 @@ function DCASimulator() {
   const [startYear, setStartYear] = useState(new Date().getFullYear() - 5);
   const [startMonth, setStartMonth] = useState(1);
   const [frequency, setFrequency] = useState<"semi-monthly" | "monthly" | "bi-monthly">("monthly");
+  const [timingStrategy, setTimingStrategy] = useState<"start_of_month" | "best_timing" | "worst_timing">("start_of_month");
   const [monthlyAmount, setMonthlyAmount] = useState(1000);
   const [durationYears, setDurationYears] = useState(5);
 
@@ -526,7 +527,7 @@ function DCASimulator() {
         innerWrapper.style.overflow = innerOriginalOverflow;
       }
       
-      const pdfWidth = 210; // A4 width in mm
+      const pdfWidth = 297; // A4 landscape width in mm
       let pdf: jsPDF | null = null;
 
       if (topImgData) {
@@ -536,9 +537,9 @@ function DCASimulator() {
         const topPdfHeight = (topImg.height * pdfWidth) / topImg.width;
         
         pdf = new jsPDF({
-          orientation: topPdfHeight > pdfWidth ? 'p' : 'l',
+          orientation: 'l',
           unit: 'mm',
-          format: [pdfWidth, topPdfHeight > 0 ? topPdfHeight : 297]
+          format: [pdfWidth, topPdfHeight > 0 ? topPdfHeight : 210]
         });
         pdf.addImage(topImgData, 'JPEG', 0, 0, pdfWidth, topPdfHeight);
       }
@@ -550,14 +551,14 @@ function DCASimulator() {
         const tablePdfHeight = (tableImg.height * pdfWidth) / tableImg.width;
         
         if (pdf) {
-          pdf.addPage([pdfWidth, tablePdfHeight > 0 ? tablePdfHeight : 297], tablePdfHeight > pdfWidth ? 'p' : 'l');
+          pdf.addPage([pdfWidth, tablePdfHeight > 0 ? tablePdfHeight : 210], 'l');
           pdf.setPage(2);
           pdf.addImage(tableImgData, 'JPEG', 0, 0, pdfWidth, tablePdfHeight);
         } else {
           pdf = new jsPDF({
-            orientation: tablePdfHeight > pdfWidth ? 'p' : 'l',
+            orientation: 'l',
             unit: 'mm',
-            format: [pdfWidth, tablePdfHeight > 0 ? tablePdfHeight : 297]
+            format: [pdfWidth, tablePdfHeight > 0 ? tablePdfHeight : 210]
           });
           pdf.addImage(tableImgData, 'JPEG', 0, 0, pdfWidth, tablePdfHeight);
         }
@@ -679,8 +680,8 @@ function DCASimulator() {
         })
         .filter((d: any) => d && d.close !== null);
 
-      // 1. Generate Target Dates
-      const targetDates: Date[] = [];
+      // 1. Generate Target Periods
+      const periods: { start: Date, end: Date, targetDate: Date }[] = [];
       let m = 0;
       const totalMonths = durationYears * 12;
       let currentYear = startYear;
@@ -688,16 +689,32 @@ function DCASimulator() {
       
       while (m < totalMonths) {
         if (frequency === 'semi-monthly') {
-          targetDates.push(new Date(currentYear, currentMonth - 1, 1, 23, 59, 59));
-          targetDates.push(new Date(currentYear, currentMonth - 1, 15, 23, 59, 59));
+          periods.push({
+            start: new Date(currentYear, currentMonth - 1, 1),
+            end: new Date(currentYear, currentMonth - 1, 15, 23, 59, 59),
+            targetDate: new Date(currentYear, currentMonth - 1, 1, 23, 59, 59)
+          });
+          periods.push({
+            start: new Date(currentYear, currentMonth - 1, 16),
+            end: new Date(currentYear, currentMonth, 0, 23, 59, 59),
+            targetDate: new Date(currentYear, currentMonth - 1, 15, 23, 59, 59)
+          });
           m += 1;
           currentMonth += 1;
         } else if (frequency === 'monthly') {
-          targetDates.push(new Date(currentYear, currentMonth - 1, 1, 23, 59, 59));
+          periods.push({
+            start: new Date(currentYear, currentMonth - 1, 1),
+            end: new Date(currentYear, currentMonth, 0, 23, 59, 59),
+            targetDate: new Date(currentYear, currentMonth - 1, 1, 23, 59, 59)
+          });
           m += 1;
           currentMonth += 1;
         } else if (frequency === 'bi-monthly') {
-          targetDates.push(new Date(currentYear, currentMonth - 1, 1, 23, 59, 59));
+          periods.push({
+            start: new Date(currentYear, currentMonth - 1, 1),
+            end: new Date(currentYear, currentMonth + 1, 0, 23, 59, 59),
+            targetDate: new Date(currentYear, currentMonth - 1, 1, 23, 59, 59)
+          });
           m += 2;
           currentMonth += 2;
         }
@@ -709,31 +726,55 @@ function DCASimulator() {
       }
 
       // 2. Find Actual Purchase Dates and Prices
-      const purchases: { targetDate: Date, actualDate: Date, actualDateStr: string, price: number, shares: number }[] = [];
+      const purchases: { targetDate: Date, actualDate: Date, actualDateStr: string, price: number, shares: number, targetPrice: number }[] = [];
       
-      for (const targetDate of targetDates) {
-        if (targetDate > now) break;
+      for (const period of periods) {
+        if (period.start > now) break;
         
-        let price = null;
-        let actualDateStr = null;
-        let actualDateObj = null;
+        let bestDay = null;
+        let targetDay = null;
 
+        // Find the target day (1st of month or 15th)
         for (let i = dailyData.length - 1; i >= 0; i--) {
-          if (dailyData[i].date <= targetDate) {
-            price = dailyData[i].close;
-            actualDateStr = dailyData[i].dateStr;
-            actualDateObj = dailyData[i].date;
+          if (dailyData[i].date <= period.targetDate) {
+            targetDay = dailyData[i];
             break;
           }
         }
+        
+        if (timingStrategy === 'start_of_month') {
+          bestDay = targetDay;
+        } else {
+          // Find all trading days in the period
+          const daysInPeriod = dailyData.filter((d: any) => d.date >= period.start && d.date <= period.end && d.date <= now);
+          
+          if (daysInPeriod.length > 0) {
+            if (timingStrategy === 'best_timing') {
+              // Lowest price
+              bestDay = daysInPeriod.reduce((min: any, d: any) => d.close < min.close ? d : min, daysInPeriod[0]);
+            } else if (timingStrategy === 'worst_timing') {
+              // Highest price
+              bestDay = daysInPeriod.reduce((max: any, d: any) => d.close > max.close ? d : max, daysInPeriod[0]);
+            }
+          } else {
+            // Fallback if no days in period (e.g. future or missing data), just use the last available day before period.end
+            for (let i = dailyData.length - 1; i >= 0; i--) {
+              if (dailyData[i].date <= period.end) {
+                bestDay = dailyData[i];
+                break;
+              }
+            }
+          }
+        }
 
-        if (price !== null && actualDateObj !== null && actualDateStr !== null) {
+        if (bestDay && targetDay) {
           purchases.push({
-            targetDate,
-            actualDate: actualDateObj,
-            actualDateStr,
-            price,
-            shares: monthlyAmount / price
+            targetDate: period.targetDate,
+            actualDate: bestDay.date,
+            actualDateStr: bestDay.dateStr,
+            price: bestDay.close,
+            shares: monthlyAmount / bestDay.close,
+            targetPrice: targetDay.close
           });
         }
       }
@@ -779,9 +820,10 @@ function DCASimulator() {
           totalPrincipal += monthlyAmount;
           totalShares += p.shares;
           
-          const totalValue = totalShares * p.price;
+          const valuationPrice = timingStrategy === 'start_of_month' ? p.price : p.targetPrice;
+          const totalValue = totalShares * valuationPrice;
           const averageCost = totalPrincipal / totalShares;
-          const percentageDiff = ((p.price - averageCost) / averageCost) * 100;
+          const percentageDiff = ((valuationPrice - averageCost) / averageCost) * 100;
           
           simResults.push({
             year: p.targetDate.getFullYear(),
@@ -911,6 +953,26 @@ function DCASimulator() {
               <option value="semi-monthly">每半個月</option>
               <option value="monthly">每一個月</option>
               <option value="bi-monthly">每兩個月</option>
+            </select>
+            <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-gray-500">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </div>
+          </div>
+        </div>
+
+        <div className="group/input">
+          <label className="block text-sm font-semibold text-gray-700 mb-2 ml-1">
+            定投時機
+          </label>
+          <div className="relative transform transition-all duration-200 group-focus-within/input:-translate-y-1">
+            <select
+              value={timingStrategy}
+              onChange={(e) => setTimingStrategy(e.target.value as any)}
+              className="block w-full px-4 py-3.5 bg-gray-50/50 border border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-gray-900 font-medium appearance-none shadow-sm"
+            >
+              <option value="start_of_month">月頭定投</option>
+              <option value="best_timing">最佳時機</option>
+              <option value="worst_timing">最差時機</option>
             </select>
             <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-gray-500">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>

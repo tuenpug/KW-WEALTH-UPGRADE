@@ -55,8 +55,11 @@ import {
   RefreshCw,
 } from "lucide-react";
 
+import { OverallReportModal } from "../components/OverallReportModal";
+
 export default function DCARecords() {
   const { state, addOrUpdateDCARecord, deleteDCARecord, addTradeRecord, deleteTradeRecord, importDCADataset, setInitialCashReserve } = useAppContext();
+  const [showOverallReport, setShowOverallReport] = useState(false);
   
   // --- Categories from AI Plan ---
   const categories = useMemo(() => {
@@ -96,6 +99,26 @@ export default function DCARecords() {
   }>>({});
 
   const [noDCAModes, setNoDCAModes] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (state.aiPlan && state.aiPlan.allocations.length > 0) {
+      const newNoDCA: Record<string, boolean> = {};
+      categories.forEach(cat => {
+        const baseCategory = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+        const ticker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
+        const allocation = state.aiPlan?.allocations.find(a => a.category === baseCategory);
+        
+        if (allocation) {
+          let isZero = allocation.percentage === 0;
+          if (!isZero && ticker && allocation.tickerPercentages && allocation.tickerPercentages[ticker] !== undefined) {
+            isZero = allocation.tickerPercentages[ticker] === 0;
+          }
+          newNoDCA[cat] = isZero;
+        }
+      });
+      setNoDCAModes(prev => ({ ...prev, ...newNoDCA }));
+    }
+  }, [state.aiPlan, categories]);
 
   const toggleNoDCA = (category: string) => {
     setNoDCAModes(prev => ({ ...prev, [category]: !prev[category] }));
@@ -211,16 +234,22 @@ export default function DCARecords() {
   
   useEffect(() => {
     setRealTimePrices(prev => {
-      if (prev[selectedCategory] !== undefined) return prev;
-      const catBase = selectedCategory.includes(" - ") ? selectedCategory.split(" - ")[0] : selectedCategory;
-      const catTicker = selectedCategory.includes(" - ") ? selectedCategory.split(" - ")[1] : "";
-      const records = state.dcaRecords.filter(r => (r.category === catBase && (catTicker ? r.ticker === catTicker : true)) || (!r.category && catBase === "一般定投"));
-      if (records.length > 0) {
-        return { ...prev, [selectedCategory]: records[records.length - 1].price };
-      }
-      return prev;
+      let updated = false;
+      const newPrices = { ...prev };
+      categories.forEach(cat => {
+        if (newPrices[cat] === undefined) {
+          const catBase = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+          const catTicker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
+          const records = state.dcaRecords.filter(r => (r.category === catBase && (catTicker ? r.ticker === catTicker : true)) || (!r.category && catBase === "一般定投"));
+          if (records.length > 0) {
+            newPrices[cat] = records[records.length - 1].price;
+            updated = true;
+          }
+        }
+      });
+      return updated ? newPrices : prev;
     });
-  }, [selectedCategory, state.dcaRecords]);
+  }, [categories, state.dcaRecords]);
 
   const realTimePrice = realTimePrices[selectedCategory] || 0;
   const setRealTimePrice = (val: number) => setRealTimePrices(prev => ({ ...prev, [selectedCategory]: val }));
@@ -776,6 +805,7 @@ export default function DCARecords() {
     // Note: state.dcaRecords doesn't have the newly added record yet, so we simulate it
     const isMissing = (cat: string) => {
       if (cat === selectedCategory) return false; // We just added it
+      if (noDCAModes[cat]) return false; // Skipped, so not missing
       const catBase = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
       const catTicker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
       return !state.dcaRecords.some(r => r.year === selectedYear && r.month === selectedMonth && (r.category === catBase && (catTicker ? r.ticker === catTicker : true) || (!r.category && catBase === "一般定投")));
@@ -882,6 +912,9 @@ export default function DCARecords() {
     try {
       await new Promise(resolve => setTimeout(resolve, 100));
 
+      const originalHeight = reportRef.current.style.height;
+      reportRef.current.style.height = 'auto';
+
       const canvas = await html2canvas(reportRef.current, {
         scale: 2,
         backgroundColor: "#ffffff",
@@ -903,6 +936,8 @@ export default function DCARecords() {
           }
         }
       });
+      
+      reportRef.current.style.height = originalHeight;
       const url = canvas.toDataURL("image/jpeg", 1.0);
       const a = document.createElement("a");
       a.href = url;
@@ -924,9 +959,11 @@ export default function DCARecords() {
       
       const originalOverflow = scrollContainer.style.overflow;
       const originalHeight = scrollContainer.style.height;
+      const originalElementHeight = element.style.height;
       
       scrollContainer.style.overflow = 'visible';
       scrollContainer.style.height = 'auto';
+      element.style.height = 'auto';
 
       const canvas = await html2canvas(element, {
         scale: 2,
@@ -940,16 +977,20 @@ export default function DCARecords() {
 
       scrollContainer.style.overflow = originalOverflow;
       scrollContainer.style.height = originalHeight;
+      element.style.height = originalElementHeight;
 
       const imgData = canvas.toDataURL("image/jpeg", 1.0);
       
+      const pdfWidth = 297; // A4 landscape width in mm
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      
       const pdf = new jsPDF({
-        orientation: canvas.width > canvas.height ? 'l' : 'p',
-        unit: 'px',
-        format: [canvas.width, canvas.height]
+        orientation: 'l',
+        unit: 'mm',
+        format: [pdfWidth, pdfHeight > 0 ? pdfHeight : 210]
       });
 
-      pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
       pdf.save(`dca_report_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) {
       console.error("Failed to export PDF", err);
@@ -985,6 +1026,12 @@ export default function DCARecords() {
           
           <div className="flex gap-3">
              <button 
+               onClick={() => setShowOverallReport(true)}
+               className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white backdrop-blur-md border border-emerald-400 rounded-xl transition-all text-sm font-bold shadow-lg"
+             >
+               <FileText className="w-4 h-4" /> 生成總報告
+             </button>
+             <button 
                onClick={handleExport}
                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 rounded-xl transition-all text-sm font-bold"
              >
@@ -1012,7 +1059,7 @@ export default function DCARecords() {
         {categories.map(cat => {
           const catBase = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
           const catTicker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
-          const hasRecord = state.dcaRecords.some(r => r.year === selectedYear && r.month === selectedMonth && (r.category === catBase && (catTicker ? r.ticker === catTicker : true) || (!r.category && catBase === "一般定投")));
+          const hasRecord = noDCAModes[cat] || state.dcaRecords.some(r => r.year === selectedYear && r.month === selectedMonth && (r.category === catBase && (catTicker ? r.ticker === catTicker : true) || (!r.category && catBase === "一般定投")));
           
           let tabClass = "";
           if (selectedCategory === cat) {
@@ -1890,6 +1937,17 @@ export default function DCARecords() {
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showOverallReport && (
+          <OverallReportModal 
+            state={state} 
+            categories={categories} 
+            realTimePrices={realTimePrices} 
+            onClose={() => setShowOverallReport(false)} 
+          />
         )}
       </AnimatePresence>
     </motion.div>
