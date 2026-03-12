@@ -5,6 +5,34 @@ import html2canvas from "html2canvas";
 import CandlestickChart from "../components/CandlestickChart";
 import { jsPDF } from "jspdf";
 import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+
+// Custom Dot for the chart
+const CustomDot = (props: any) => {
+  const { cx, cy, index, dataLength } = props;
+  
+  let fill = "#3b82f6"; // Blue (Pure DCA)
+  
+  if (index === 0) {
+    fill = "#06b6d4"; // Blue-Green (Entry)
+  } else if (index === dataLength - 1) {
+    fill = "#db2777"; // Blue-Red (Exit)
+  }
+
+  return (
+    <circle cx={cx} cy={cy} r={5} stroke="white" strokeWidth={2} fill={fill} />
+  );
+};
+
+import {
   TrendingUp,
   TrendingDown,
   DollarSign,

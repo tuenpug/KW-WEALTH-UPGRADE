@@ -89,9 +89,9 @@ export default function CandlestickChart({ data, realTimePrice }: CandlestickCha
     });
     seriesRef.current = candlestickSeries;
 
-    const ma50Series = chart.addSeries(LineSeries, { color: '#34D399', lineWidth: 1.5, title: 'MA50' });
-    const ma100Series = chart.addSeries(LineSeries, { color: '#60A5FA', lineWidth: 1.5, title: 'MA100' });
-    const ma250Series = chart.addSeries(LineSeries, { color: '#F472B6', lineWidth: 1.5, title: 'MA250' });
+    const ma50Series = chart.addSeries(LineSeries, { color: '#34D399', lineWidth: 2, title: 'MA50' });
+    const ma100Series = chart.addSeries(LineSeries, { color: '#60A5FA', lineWidth: 2, title: 'MA100' });
+    const ma250Series = chart.addSeries(LineSeries, { color: '#F472B6', lineWidth: 2, title: 'MA250' });
 
     const formattedData = data.map(d => ({
       time: d.date,
