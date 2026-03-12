@@ -1,6 +1,8 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import yahooFinance from "yahoo-finance2";
+import path from "path";
+import fs from "fs";
 
 // Helper to initialize yahooFinance for v3
 let yf: any = yahooFinance;
@@ -22,10 +24,10 @@ if (typeof yf === 'function') {
 const cache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_DURATION = 1000 * 60 * 60; // 1 hour
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+const app = express();
+const PORT = 3000;
 
+async function setupServer() {
   // API routes FIRST
   app.get("/api/stock/:symbol", async (req, res) => {
     const { symbol } = req.params;
@@ -44,25 +46,18 @@ async function startServer() {
     }
 
     try {
-      // Convert timestamps to Date objects
-      // period1 and period2 from query are in seconds
-      
       const p1 = new Date(Number(period1) * 1000);
       const p2 = new Date(Number(period2) * 1000);
 
       const queryOptions = {
-        period1: p1, // start date
-        period2: p2, // end date
-        interval: "1d" as const, // daily interval
-        events: "div|split", // Request dividends and splits
+        period1: p1,
+        period2: p2,
+        interval: "1d" as const,
+        events: "div|split",
       };
 
-      // yf.suppressNotices(['yahooSurvey']); // Removed to avoid TypeError
-
       const result = await yf.chart(symbol, queryOptions) as any;
-      console.log(`Fetched data for ${symbol}. Events:`, JSON.stringify(result.events, null, 2));
       
-      // Try to get Chinese name for HK stocks
       let stockName = result.meta?.shortName || result.meta?.longName || symbol;
       if (symbol.endsWith('.HK')) {
         try {
@@ -74,12 +69,6 @@ async function startServer() {
           console.error("Error fetching quote for name:", e);
         }
       }
-
-      // Transform the result to match the structure expected by the frontend
-      // The frontend expects: { chart: { result: [ { timestamp: [...], indicators: { quote: [ { close: [...] } ] } } ] } }
-      // yahoo-finance2 returns a cleaner object: { meta, timestamp, quotes: [{ date, open, high, low, close, volume, ... }] }
-      // We need to map it back or update the frontend.
-      // Let's map it back to the Yahoo API structure to minimize frontend changes for now.
 
       if (!result || !result.quotes || result.quotes.length === 0) {
         return res.status(404).json({ error: "No data found for the given symbol and period" });
@@ -122,13 +111,9 @@ async function startServer() {
       cache.set(cacheKey, { data: formattedData, timestamp: Date.now() });
       res.json(formattedData);
     } catch (error: any) {
-      // Handle specific Yahoo errors
       if (error.message && (error.message.includes("404") || error.message.includes("No data found"))) {
-        console.warn(`No data found for symbol ${symbol}, may be delisted.`);
         return res.status(404).json({ error: "無法獲取該股票數據，請檢查代號是否正確或已下市。" });
       }
-      
-      console.error("Error fetching stock data:", error);
       res.status(500).json({ error: "Failed to fetch stock data", details: error.message });
     }
   });
@@ -145,13 +130,22 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // In production, serve static files from dist
-    app.use(express.static('dist'));
+    const distPath = path.join(process.cwd(), 'dist');
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+    }
   }
+}
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+// Only start the server if this file is run directly
+if (import.meta.url === `file://${process.argv[1]}` || process.env.NODE_ENV !== "production") {
+  setupServer().then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
   });
 }
 
-startServer();
+setupServer();
+
+export default app;
