@@ -18,6 +18,7 @@ interface CandlestickChartProps {
 }
 
 export default function CandlestickChart({ data, realTimePrice }: CandlestickChartProps) {
+  console.log(`CandlestickChart rendering with ${data.length} points`);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);

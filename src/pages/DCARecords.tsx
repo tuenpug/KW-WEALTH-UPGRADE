@@ -255,7 +255,31 @@ export default function DCARecords() {
 
   // --- Calculations ---
   const baseSelectedCategory = selectedCategory.includes(" - ") ? selectedCategory.split(" - ")[0] : selectedCategory;
-  const selectedTicker = selectedCategory.includes(" - ") ? selectedCategory.split(" - ")[1] : "";
+  const selectedTicker = useMemo(() => {
+    console.log(`Deriving ticker for category: "${selectedCategory}"`);
+    
+    // First check if user has manually entered a ticker in the input field
+    const manualTicker = tabInputs[selectedCategory]?.ticker?.trim();
+    if (manualTicker) {
+      console.log(`Using manual ticker: "${manualTicker}"`);
+      return manualTicker;
+    }
+
+    if (selectedCategory.includes(" - ")) {
+      const parts = selectedCategory.split(" - ");
+      const ticker = parts[parts.length - 1].trim();
+      console.log(`Found ticker via separator: "${ticker}"`);
+      return ticker;
+    }
+    // Fallback: check if the category itself looks like a ticker (e.g. AAPL, 0700.HK, 2330.TW)
+    const trimmed = selectedCategory.trim();
+    if (/^[A-Z0-9.]+$/.test(trimmed) && trimmed.length >= 1) {
+      console.log(`Category itself is a ticker: "${trimmed}"`);
+      return trimmed;
+    }
+    console.log(`No ticker found for category: "${selectedCategory}"`);
+    return "";
+  }, [selectedCategory, tabInputs]);
   const isLiquidity = baseSelectedCategory === "流動資金及定期存款" || baseSelectedCategory === "現金儲備／定期";
 
   // Filter records by selected category for stats and reports
@@ -373,9 +397,11 @@ export default function DCARecords() {
         const queryStart = startTimestamp - bufferSeconds;
 
         const url = `/api/stock/${symbol}?period1=${queryStart}&period2=${endTimestamp}`;
+        console.log(`Fetching chart data from: ${url}`);
         const res = await fetch(url);
         
         if (!res.ok) {
+          console.error(`Fetch failed with status: ${res.status}`);
           let errorMsg = `無法獲取數據: ${res.statusText}`;
           try {
             const errorData = await res.json();
@@ -468,7 +494,11 @@ export default function DCARecords() {
       }
     };
 
-    fetchChartData();
+    const timer = setTimeout(() => {
+      fetchChartData();
+    }, 500);
+
+    return () => clearTimeout(timer);
   }, [selectedTicker, isLiquidity, refreshTrigger]);
 
   const dailyChartData = useMemo(() => {
@@ -1350,7 +1380,7 @@ export default function DCARecords() {
                       <p className="text-xs text-gray-500">請檢查股票代號是否正確 (例如: AAPL, 2330.TW)</p>
                     </div>
                   </div>
-                ) : techAnalysis ? (
+                ) : dailyChartData.length > 0 ? (
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                     <div className="lg:col-span-2 bg-gray-800 rounded-2xl p-4 border border-gray-700">
                       <div className="h-64 w-full">
@@ -1359,21 +1389,40 @@ export default function DCARecords() {
                     </div>
                     
                     <div className="space-y-4">
-                      <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
-                        <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">趨勢簡說</p>
-                        <p className="text-sm text-gray-300 leading-relaxed">{techAnalysis.advice}</p>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
-                          <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider mb-1">建議進場</p>
-                          <p className="text-xl font-bold text-white">${techAnalysis.entry.toFixed(2)}</p>
+                      {techAnalysis ? (
+                        <>
+                          <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                            <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">趨勢簡說</p>
+                            <p className="text-sm text-gray-300 leading-relaxed">{techAnalysis.advice}</p>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                              <p className="text-xs text-emerald-400 font-bold uppercase tracking-wider mb-1">建議進場</p>
+                              <p className="text-xl font-bold text-white">${techAnalysis.entry.toFixed(2)}</p>
+                            </div>
+                            <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                              <p className="text-xs text-rose-400 font-bold uppercase tracking-wider mb-1">建議離場</p>
+                              <p className="text-xl font-bold text-white">${techAnalysis.exit.toFixed(2)}</p>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700 h-full flex items-center justify-center">
+                          <p className="text-sm text-gray-500 italic">數據不足以進行技術分析</p>
                         </div>
-                        <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
-                          <p className="text-xs text-rose-400 font-bold uppercase tracking-wider mb-1">建議離場</p>
-                          <p className="text-xl font-bold text-white">${techAnalysis.exit.toFixed(2)}</p>
-                        </div>
-                      </div>
+                      )}
+                    </div>
+                  </div>
+                ) : !isLiquidity ? (
+                  <div className="flex items-center justify-center h-64 bg-gray-800 rounded-2xl border border-gray-700 mb-6">
+                    <div className="text-center space-y-2">
+                       <p className="text-gray-400 text-sm">
+                         {selectedTicker ? "無可用數據，請點擊更新或檢查代號" : "未偵測到股票代號，請確保類別名稱包含 ' - 代號' (例如: 科技股 - AAPL)"}
+                       </p>
+                       {selectedTicker && (
+                         <p className="text-xs text-gray-500">當前識別代號: <span className="text-indigo-400 font-mono">{selectedTicker}</span></p>
+                       )}
                     </div>
                   </div>
                 ) : null}
