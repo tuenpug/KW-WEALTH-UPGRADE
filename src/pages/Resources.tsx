@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion } from "motion/react";
 import * as htmlToImage from "html-to-image";
 import jsPDF from "jspdf";
@@ -467,6 +467,19 @@ function DCASimulator() {
   const [timingStrategy, setTimingStrategy] = useState<"start_of_month" | "best_timing" | "worst_timing">("start_of_month");
   const [monthlyAmount, setMonthlyAmount] = useState(1000);
   const [durationYears, setDurationYears] = useState(5);
+  const [exchangeRate, setExchangeRate] = useState(7.8);
+
+  const isUSStock = useMemo(() => {
+    return /^[A-Za-z]/.test(ticker);
+  }, [ticker]);
+
+  useEffect(() => {
+    if (isUSStock) {
+      setExchangeRate(7.8);
+    } else {
+      setExchangeRate(1);
+    }
+  }, [isUSStock]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -727,6 +740,7 @@ function DCASimulator() {
 
       // 2. Find Actual Purchase Dates and Prices
       const purchases: { targetDate: Date, actualDate: Date, actualDateStr: string, price: number, shares: number, targetPrice: number }[] = [];
+      const effectiveMonthlyAmount = isUSStock ? monthlyAmount / exchangeRate : monthlyAmount;
       
       for (const period of periods) {
         if (period.start > now) break;
@@ -773,7 +787,7 @@ function DCASimulator() {
             actualDate: bestDay.date,
             actualDateStr: bestDay.dateStr,
             price: bestDay.close,
-            shares: monthlyAmount / bestDay.close,
+            shares: effectiveMonthlyAmount / bestDay.close,
             targetPrice: targetDay.close
           });
         }
@@ -817,7 +831,7 @@ function DCASimulator() {
           accumulatedDividends += received;
         } else if (ev.type === 'purchase') {
           const p = ev.data;
-          totalPrincipal += monthlyAmount;
+          totalPrincipal += effectiveMonthlyAmount;
           totalShares += p.shares;
           
           const valuationPrice = timingStrategy === 'start_of_month' ? p.price : p.targetPrice;
@@ -830,7 +844,7 @@ function DCASimulator() {
             month: p.targetDate.getMonth() + 1,
             actualDate: p.actualDateStr,
             price: p.price,
-            monthlyPrincipal: monthlyAmount,
+            monthlyPrincipal: effectiveMonthlyAmount,
             totalPrincipal,
             sharesBought: p.shares,
             totalShares,
@@ -997,6 +1011,23 @@ function DCASimulator() {
           </div>
         </div>
 
+        {isUSStock && (
+          <div className="group/input">
+            <label className="block text-sm font-semibold text-gray-700 mb-2 ml-1">
+              匯率 (HKD to USD)
+            </label>
+            <div className="relative transform transition-all duration-200 group-focus-within/input:-translate-y-1">
+              <input
+                type="number"
+                step="0.01"
+                value={exchangeRate}
+                onChange={(e) => setExchangeRate(Number(e.target.value))}
+                className="block w-full px-4 py-3.5 bg-gray-50/50 border border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-gray-900 font-medium shadow-sm"
+              />
+            </div>
+          </div>
+        )}
+
         <div className="group/input">
           <label className="block text-sm font-semibold text-gray-700 mb-2 ml-1">
             增值年期 (年)
@@ -1066,24 +1097,28 @@ function DCASimulator() {
                   <p className="text-sm text-gray-500 mb-1 font-medium">總投入本金</p>
                   <p className="text-2xl font-bold text-gray-900 tracking-tight">
                     ${results[results.length - 1].totalPrincipal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-gray-500 ml-1 block">(HKD ${(results[results.length - 1].totalPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
                 <div className="bg-blue-50/80 p-5 rounded-2xl border border-blue-100 hover:bg-blue-50 hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-blue-600 mb-1 font-medium">總股票價值</p>
                   <p className="text-2xl font-bold text-blue-700 tracking-tight">
                     ${results[results.length - 1].totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-blue-500 ml-1 block">(HKD ${(results[results.length - 1].totalValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
                 <div className="bg-yellow-50/80 p-5 rounded-2xl border border-yellow-100 hover:bg-yellow-50 hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-yellow-600 mb-1 font-medium">總收取利息</p>
                   <p className="text-2xl font-bold text-yellow-700 tracking-tight">
                     ${results[results.length - 1].accumulatedDividends.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-yellow-600 ml-1 block">(HKD ${(results[results.length - 1].accumulatedDividends * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
                 <div className="bg-indigo-50/80 p-5 rounded-2xl border border-indigo-100 hover:bg-indigo-50 hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-indigo-600 mb-1 font-medium">總收益</p>
                   <p className="text-2xl font-bold text-indigo-700 tracking-tight">
                     ${results[results.length - 1].totalAssetValueWithDividends.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-indigo-500 ml-1 block">(HKD ${(results[results.length - 1].totalAssetValueWithDividends * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
                 <div className="bg-emerald-50/80 p-5 rounded-2xl border border-emerald-100 hover:bg-emerald-50 hover:shadow-md transition-all shadow-sm">
@@ -1138,7 +1173,7 @@ function DCASimulator() {
                       strokeWidth={2} 
                       dot={(props) => <CustomDot {...props} dataLength={results.length} />}
                       activeDot={{ r: 6, strokeWidth: 0 }}
-                      name="股價 (Price)"
+                      name={isUSStock ? "股價 (Price USD)" : "股價 (Price)"}
                     />
                     <Line 
                       type="monotone" 
@@ -1147,7 +1182,7 @@ function DCASimulator() {
                       strokeWidth={2} 
                       strokeDasharray="5 5"
                       dot={false}
-                      name="平均成本 (Avg Cost)"
+                      name={isUSStock ? "平均成本 (Avg Cost USD)" : "平均成本 (Avg Cost)"}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -1190,7 +1225,7 @@ function DCASimulator() {
                       stroke="#2563eb" 
                       strokeWidth={2} 
                       dot={false}
-                      name="股票價值 (Stock Value)"
+                      name={isUSStock ? "股票價值 (Stock Value USD)" : "股票價值 (Stock Value)"}
                     />
                     <Line 
                       type="monotone" 
@@ -1198,7 +1233,7 @@ function DCASimulator() {
                       stroke="#059669" 
                       strokeWidth={2} 
                       dot={false}
-                      name="總資產價值 (Total Asset Value)"
+                      name={isUSStock ? "總資產價值 (Total Asset Value USD)" : "總資產價值 (Total Asset Value)"}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -1212,7 +1247,7 @@ function DCASimulator() {
                     <tr>
                       <th className="px-6 py-4 font-semibold">年月</th>
                       <th className="px-6 py-4 font-semibold">實際交易日</th>
-                      <th className="px-6 py-4 font-semibold text-right">股價 (USD)</th>
+                      <th className="px-6 py-4 font-semibold text-right">{isUSStock ? '股價 (USD)' : '股價'}</th>
                       <th className="px-6 py-4 font-semibold text-right">平均成本</th>
                       <th className="px-6 py-4 font-semibold text-right">現價差幅</th>
                       <th className="px-6 py-4 font-semibold text-right">每月投入</th>
@@ -1230,25 +1265,39 @@ function DCASimulator() {
                           {r.year}年{r.month}月
                         </td>
                         <td className="px-6 py-4 text-gray-500">{r.actualDate}</td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">${r.price.toFixed(2)}</td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">${r.averageCost.toFixed(2)}</td>
+                        <td className="px-6 py-4 text-right font-mono text-gray-600">
+                          ${r.price.toFixed(2)}
+                          {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.price * exchangeRate).toFixed(2)}</div>}
+                        </td>
+                        <td className="px-6 py-4 text-right font-mono text-gray-600">
+                          ${r.averageCost.toFixed(2)}
+                          {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.averageCost * exchangeRate).toFixed(2)}</div>}
+                        </td>
                         <td className={`px-6 py-4 text-right font-mono font-bold ${r.percentageDiff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {r.percentageDiff > 0 ? '+' : ''}{r.percentageDiff.toFixed(2)}%
                         </td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">${r.monthlyPrincipal.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">${r.totalPrincipal.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-right font-mono text-gray-600">
+                          ${r.monthlyPrincipal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.monthlyPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                        </td>
+                        <td className="px-6 py-4 text-right font-mono text-gray-600">
+                          ${r.totalPrincipal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.totalPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                        </td>
                         <td className="px-6 py-4 text-right font-mono text-gray-600">{r.sharesBought.toFixed(4)}</td>
                         <td className="px-6 py-4 text-right font-mono text-gray-600">{r.totalShares.toFixed(4)}</td>
                         <td className="px-6 py-4 text-right font-mono text-yellow-600 font-medium">
                           {r.dividendReceived > 0 ? (
                             <span>
-                              +${r.dividendReceived.toFixed(2)}
+                              +${r.dividendReceived.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                               <span className="text-xs text-gray-500 ml-1">(${r.dividendPerShare.toFixed(3)}/股)</span>
+                              {isUSStock && <div className="text-[10px] text-yellow-500 font-normal">HKD ${(r.dividendReceived * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                             </span>
                           ) : '-'}
                         </td>
                         <td className="px-6 py-4 text-right font-mono font-bold text-blue-600 group-hover:text-blue-700">
                           ${r.totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          {isUSStock && <div className="text-[10px] text-blue-400 font-normal">HKD ${(r.totalValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                         </td>
                       </tr>
                     ))}

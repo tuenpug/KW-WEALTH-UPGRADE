@@ -93,6 +93,9 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
     const baseCategory = category.includes(" - ") ? category.split(" - ")[0] : category;
     const ticker = category.includes(" - ") ? category.split(" - ")[1] : "";
     
+    const isUSStock = /^[A-Za-z]/.test(ticker);
+    const exchangeRate = isUSStock ? 7.8 : 1;
+    
     const categoryDCARecords = state.dcaRecords.filter(r => (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || (!r.category && baseCategory === "一般定投"));
     const categoryTradeRecords = state.tradeRecords.filter(r => (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || (!r.category && baseCategory === "一般定投"));
     
@@ -166,9 +169,10 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
           displayDate: `${r.year}年${r.month}月${r.period ? ` (${r.period})` : ''}`,
           type: 'DCA',
           price: r.price,
-          amount: r.amount,
+          amount: r.amount / exchangeRate,
+          amountInHKD: r.amount,
           shares: r.shares,
-          totalAmount: r.amount,
+          totalAmount: r.amount / exchangeRate,
           dividendPerShare: r.dividendPerShare || 0,
         });
       });
@@ -179,9 +183,10 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
           displayDate: r.date,
           type: r.type === 'buy' ? 'Buy' : 'Sell',
           price: r.price,
-          amount: r.totalAmount,
+          amount: r.totalAmount / exchangeRate,
+          amountInHKD: r.totalAmount,
           shares: r.shares,
-          totalAmount: r.type === 'buy' ? r.totalAmount : -r.totalAmount,
+          totalAmount: (r.type === 'buy' ? r.totalAmount : -r.totalAmount) / exchangeRate,
           dividendPerShare: 0,
         });
       });
@@ -244,6 +249,7 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
 
     const lastRecord = reportData[reportData.length - 1];
     const catInvested = lastRecord ? lastRecord.cumulativePrincipal : 0;
+    const catInvestedInHKD = catInvested * exchangeRate;
     
     let catAssetValue = 0;
     if (isLiquidity) {
@@ -252,22 +258,25 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
       const currentPrice = realTimePrices[category] || (lastRecord ? lastRecord.price : 0);
       catAssetValue = lastRecord ? (lastRecord.cumulativeShares * currentPrice + lastRecord.cumulativeDividends) : 0;
     }
+    const catAssetValueInHKD = catAssetValue * exchangeRate;
     
     const catProfit = catAssetValue - catInvested;
 
     if (!isLiquidity) {
-      totalInvested += catInvested;
-      totalAssetValue += catAssetValue;
+      totalInvested += catInvestedInHKD;
+      totalAssetValue += catAssetValueInHKD;
     } else {
       // For liquidity, it's global, so we only add it once. Wait, if there are multiple liquidity categories?
       // Usually there's only one.
-      totalInvested += catInvested;
-      totalAssetValue += catAssetValue;
+      totalInvested += catInvestedInHKD;
+      totalAssetValue += catAssetValueInHKD;
     }
 
     return {
       category,
       isLiquidity,
+      isUSStock,
+      exchangeRate,
       reportData,
       catInvested,
       catAssetValue,
@@ -323,21 +332,21 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
             <h3 className="text-xl font-bold text-gray-900 mb-6 border-b border-gray-200 pb-4">總覽 (Summary)</h3>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500 font-medium mb-1">總投入資金 (Total Invested)</p>
+                <p className="text-sm text-gray-500 font-medium mb-1">總投入資金 (Total Invested HKD)</p>
                 <p className="text-2xl font-bold text-gray-900">${totalInvested.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
               <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500 font-medium mb-1">現時資產總值 (Total Asset Value)</p>
+                <p className="text-sm text-gray-500 font-medium mb-1">現時資產總值 (Total Asset Value HKD)</p>
                 <p className="text-2xl font-bold text-blue-600">${totalAssetValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
               </div>
               <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500 font-medium mb-1">總盈利 (Total Profit)</p>
+                <p className="text-sm text-gray-500 font-medium mb-1">總盈利 (Total Profit HKD)</p>
                 <p className={`text-2xl font-bold ${totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                   {totalProfit > 0 ? '+' : ''}{totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
               <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500 font-medium mb-1">現時現金儲備 (Current Cash Reserve)</p>
+                <p className="text-sm text-gray-500 font-medium mb-1">現時現金儲備 (Current Cash Reserve HKD)</p>
                 <p className="text-2xl font-bold text-indigo-600">
                   ${(categoryReports.find(cr => cr.isLiquidity)?.catAssetValue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
@@ -347,15 +356,21 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
             <div className="mt-8">
               <h4 className="text-md font-bold text-gray-700 mb-4">現時資產分佈 (Asset Distribution)</h4>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {categoryReports.map(cr => (
-                  <div key={cr.category} className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
-                    <p className="text-xs text-gray-500 font-bold truncate" title={cr.category}>{cr.category}</p>
-                    <p className="text-lg font-bold text-gray-900">${cr.catAssetValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                    <p className="text-xs text-gray-400">
-                      {totalAssetValue > 0 ? ((cr.catAssetValue / totalAssetValue) * 100).toFixed(1) : 0}%
-                    </p>
-                  </div>
-                ))}
+                {categoryReports.map(cr => {
+                  const assetValueInHKD = cr.catAssetValue * cr.exchangeRate;
+                  return (
+                    <div key={cr.category} className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
+                      <p className="text-xs text-gray-500 font-bold truncate" title={cr.category}>{cr.category}</p>
+                      <p className="text-lg font-bold text-gray-900">
+                        ${cr.catAssetValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {!cr.isLiquidity && cr.isUSStock && <span className="text-xs text-gray-400 font-normal ml-1">(HKD ${assetValueInHKD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {totalAssetValue > 0 ? ((assetValueInHKD / totalAssetValue) * 100).toFixed(1) : 0}%
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -397,8 +412,8 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
                       </>
                     ) : (
                       <>
-                        <Line type="monotone" dataKey="price" stroke="#2563eb" strokeWidth={2} dot={<CustomDot />} activeDot={{ r: 6 }} name="股票每月價格 (Monthly Price)" />
-                        <Line type="monotone" dataKey="averageCost" stroke="#9333ea" strokeWidth={2} strokeDasharray="5 5" dot={false} name="平均買入價 (Avg Cost)" />
+                        <Line type="monotone" dataKey="price" stroke="#2563eb" strokeWidth={2} dot={<CustomDot />} activeDot={{ r: 6 }} name={`股票每月價格 (Monthly Price${cr.isUSStock ? ' USD' : ''})`} />
+                        <Line type="monotone" dataKey="averageCost" stroke="#9333ea" strokeWidth={2} strokeDasharray="5 5" dot={false} name={`平均買入價 (Avg Cost${cr.isUSStock ? ' USD' : ''})`} />
                       </>
                     )}
                   </LineChart>
@@ -412,7 +427,7 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
                      <div className="grid gap-4 text-xs font-semibold text-gray-500 uppercase" style={{ gridTemplateColumns: '1.2fr 0.8fr 1fr 1fr 1fr 1fr 1.2fr 1fr 1fr 1.2fr 0.8fr 0.8fr 1.2fr' }}>
                         <div>日期</div>
                         <div>類型</div>
-                        <div className="text-right">{cr.isLiquidity ? '單位價值' : '股價 (USD)'}</div>
+                        <div className="text-right">{cr.isLiquidity ? '單位價值' : (cr.isUSStock ? '股價 (USD)' : '股價')}</div>
                         <div className="text-right">平均成本</div>
                         <div className="text-right">現價差幅</div>
                         <div className="text-right">變動金額</div>
@@ -441,16 +456,24 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
                               {row.type}
                             </span>
                           </div>
-                          <div className="text-right font-mono">${row.price.toFixed(2)}</div>
-                          <div className="text-right font-mono">${row.averageCost.toFixed(2)}</div>
+                          <div className="text-right font-mono">
+                            ${row.price.toFixed(2)}
+                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400">HKD ${(row.price * cr.exchangeRate).toFixed(2)}</div>}
+                          </div>
+                          <div className="text-right font-mono">
+                            ${row.averageCost.toFixed(2)}
+                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400">HKD ${(row.averageCost * cr.exchangeRate).toFixed(2)}</div>}
+                          </div>
                           <div className={`text-right font-mono font-bold ${row.percentageDiff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {row.percentageDiff > 0 ? '+' : ''}{row.percentageDiff.toFixed(2)}%
                           </div>
                           <div className={`text-right font-mono font-bold ${row.amount > 0 ? 'text-emerald-600' : row.amount < 0 ? 'text-rose-600' : 'text-gray-600'}`}>
                             {row.amount > 0 ? '+' : ''}{row.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.amount * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                           <div className="text-right font-mono font-bold text-gray-900">
                             ${row.cumulativePrincipal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.cumulativePrincipal * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                           <div className={`text-right font-mono ${row.shares > 0 ? 'text-emerald-600' : row.shares < 0 ? 'text-rose-600' : 'text-gray-600'}`}>
                             {row.shares > 0 ? '+' : ''}{row.shares.toFixed(2)}
@@ -460,15 +483,19 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
                           </div>
                           <div className="text-right font-mono font-bold text-gray-900">
                             ${row.currentAssetValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.currentAssetValue * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                           <div className="text-right font-mono text-gray-500">
                             ${row.dividendPerShare.toFixed(2)}
+                            {!cr.isLiquidity && cr.isUSStock && row.dividendPerShare > 0 && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.dividendPerShare * cr.exchangeRate).toFixed(2)}</div>}
                           </div>
                           <div className="text-right font-mono text-emerald-600">
                             ${row.dividendReceived.toFixed(2)}
+                            {!cr.isLiquidity && cr.isUSStock && row.dividendReceived > 0 && <div className="text-[10px] text-emerald-400 font-normal">HKD ${(row.dividendReceived * cr.exchangeRate).toFixed(2)}</div>}
                           </div>
                           <div className="text-right font-mono font-bold text-indigo-600">
                             ${row.totalAssetValueWithDividends.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-indigo-400 font-normal">HKD ${(row.totalAssetValueWithDividends * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                         </div>
                         ))}

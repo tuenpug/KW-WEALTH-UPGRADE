@@ -96,6 +96,8 @@ export default function DCARecords() {
     currentPrice: number;
     dividendPerShare: number;
     annualInterestRate: number;
+    exchangeRate: number;
+    minLotSize: number;
   }>>({});
 
   const [noDCAModes, setNoDCAModes] = useState<Record<string, boolean>>({});
@@ -130,13 +132,18 @@ export default function DCARecords() {
     currentPrice: 0,
     dividendPerShare: 0,
     annualInterestRate: 0,
+    exchangeRate: 1,
+    minLotSize: 1,
   };
 
   const ticker = currentTabInput.ticker;
+  const isUSStock = ticker && /^[A-Za-z]/.test(ticker);
   const monthlyAmount = currentTabInput.monthlyAmount;
   const currentPrice = currentTabInput.currentPrice;
   const dividendPerShare = currentTabInput.dividendPerShare;
   const annualInterestRate = currentTabInput.annualInterestRate;
+  const exchangeRate = currentTabInput.exchangeRate || (isUSStock ? 7.8 : 1);
+  const minLotSize = currentTabInput.minLotSize || 1;
 
   const updateTabInput = (key: string, value: any) => {
     setTabInputs(prev => ({
@@ -148,6 +155,8 @@ export default function DCARecords() {
           currentPrice: 0,
           dividendPerShare: 0,
           annualInterestRate: 0,
+          exchangeRate: isUSStock ? 7.8 : 1,
+          minLotSize: 1,
         }),
         [key]: value
       }
@@ -361,6 +370,8 @@ export default function DCARecords() {
           liquidityValue -= trade.totalAmount;
           liquidityInvested -= trade.totalAmount;
         }
+      } else if (trade.type === 'dividend') {
+        cashReserve += trade.totalAmount;
       }
     });
 
@@ -376,14 +387,29 @@ export default function DCARecords() {
       };
     }
 
-    const totalInvested = categoryDCARecords.reduce((acc, r) => acc + r.amount, 0);
-    const totalShares = categoryDCARecords.reduce((acc, r) => acc + r.shares, 0);
-    const avgPrice = totalShares > 0 ? totalInvested / totalShares : 0;
-    return { totalInvested, totalShares, avgPrice };
-  }, [categoryDCARecords, isLiquidity, tradeStats.liquidityInvested, tradeStats.liquidityValue]);
+    let totalInvested = categoryDCARecords.reduce((acc, r) => acc + r.amount, 0);
+    let totalShares = categoryDCARecords.reduce((acc, r) => acc + r.shares, 0);
+    
+    categoryTradeRecords.forEach(trade => {
+      if (trade.type === 'buy') {
+        totalInvested += trade.totalAmount;
+        totalShares += trade.shares;
+      } else if (trade.type === 'sell') {
+        if (totalShares > 0) {
+          const avgCost = totalInvested / totalShares;
+          totalInvested -= avgCost * trade.shares;
+        }
+        totalShares -= trade.shares;
+      }
+    });
 
-  const totalSharesHeld = isLiquidity ? tradeStats.liquidityValue : dcaStats.totalShares + tradeStats.tradeShares;
-  const totalAssetValue = totalSharesHeld * realTimePrice;
+    const avgPriceInHKD = totalShares > 0 ? totalInvested / totalShares : 0;
+    const avgPrice = avgPriceInHKD / (currentTabInput.exchangeRate || (ticker && /^[A-Za-z]/.test(ticker) ? 7.8 : 1));
+    return { totalInvested, totalShares, avgPrice };
+  }, [categoryDCARecords, categoryTradeRecords, isLiquidity, tradeStats.liquidityInvested, tradeStats.liquidityValue, exchangeRate, ticker]);
+
+  const totalSharesHeld = isLiquidity ? tradeStats.liquidityValue : dcaStats.totalShares;
+  const totalAssetValue = totalSharesHeld * realTimePrice * exchangeRate;
   const totalAccountValue = isLiquidity ? totalSharesHeld : totalAssetValue + tradeStats.cashReserve;
   
   const adviceLevels = [
@@ -636,14 +662,16 @@ export default function DCARecords() {
 
       // 3. Add all Trade records
       state.tradeRecords.forEach(r => {
+        const isPositive = r.type === 'sell' || r.type === 'dividend';
+        const amount = r.type === 'withdraw' ? 0 : (isPositive ? r.totalAmount : -r.totalAmount);
         timeline.push({
           date: new Date(r.date),
           displayDate: `${r.date} (${r.ticker})`,
-          type: r.type === 'buy' ? 'Trade Buy' : 'Trade Sell',
+          type: r.type === 'buy' ? 'Trade Buy' : r.type === 'sell' ? 'Trade Sell' : r.type === 'dividend' ? 'Dividend' : 'Withdraw',
           price: 1,
-          amount: r.type === 'sell' ? r.totalAmount : -r.totalAmount,
-          shares: r.type === 'sell' ? r.totalAmount : -r.totalAmount,
-          totalAmount: r.type === 'sell' ? r.totalAmount : -r.totalAmount,
+          amount: amount,
+          shares: amount,
+          totalAmount: amount,
           dividendPerShare: 0,
         });
       });
@@ -660,9 +688,10 @@ export default function DCARecords() {
           displayDate: `${r.year}年${r.month}月${r.period ? ` (${r.period})` : ''}`,
           type: 'DCA',
           price: r.price,
-          amount: r.amount,
+          amount: r.amount / exchangeRate,
+          amountInHKD: r.amount,
           shares: r.shares,
-          totalAmount: r.amount,
+          totalAmount: r.amount / exchangeRate,
           dividendPerShare: r.dividendPerShare || 0,
         });
       });
@@ -671,12 +700,13 @@ export default function DCARecords() {
         timeline.push({
           date: new Date(r.date),
           displayDate: r.date,
-          type: r.type === 'buy' ? 'Buy' : 'Sell',
+          type: r.type === 'buy' ? 'Buy' : r.type === 'sell' ? 'Sell' : 'Dividend',
           price: r.price,
-          amount: r.totalAmount,
+          amount: r.totalAmount / exchangeRate,
+          amountInHKD: r.totalAmount,
           shares: r.shares,
-          totalAmount: r.type === 'buy' ? r.totalAmount : -r.totalAmount,
-          dividendPerShare: 0,
+          totalAmount: (r.type === 'buy' ? r.totalAmount : -r.totalAmount) / exchangeRate,
+          dividendPerShare: r.type === 'dividend' ? r.totalAmount / exchangeRate : 0, // For dividend trade, totalAmount is the total dividend received
         });
       });
     }
@@ -705,15 +735,18 @@ export default function DCARecords() {
           totalAssetValueWithDividends: cumulativeShares,
         };
       } else {
+        let currentDividend = 0;
         if (item.type === 'DCA' || item.type === 'Buy') {
           cumulativePrincipal += item.amount;
           cumulativeShares += item.shares;
+          currentDividend = cumulativeShares * (item.dividendPerShare || 0);
         } else if (item.type === 'Sell') {
           cumulativePrincipal -= item.amount;
           cumulativeShares -= item.shares;
+        } else if (item.type === 'Dividend') {
+          currentDividend = item.dividendPerShare || 0;
         }
 
-        const currentDividend = cumulativeShares * (item.dividendPerShare || 0);
         cumulativeDividends += currentDividend;
 
         const currentAssetValue = cumulativeShares * item.price;
@@ -725,13 +758,17 @@ export default function DCARecords() {
         return {
           ...item,
           cumulativePrincipal,
+          cumulativePrincipalInHKD: cumulativePrincipal * exchangeRate,
           cumulativeShares,
           currentAssetValue,
+          currentAssetValueInHKD: currentAssetValue * exchangeRate,
           averageCost,
           percentageDiff,
           dividendReceived: currentDividend,
+          dividendReceivedInHKD: currentDividend * exchangeRate,
           cumulativeDividends,
           totalAssetValueWithDividends,
+          totalAssetValueWithDividendsInHKD: totalAssetValueWithDividends * exchangeRate,
         };
       }
     });
@@ -776,8 +813,12 @@ export default function DCARecords() {
     } else {
       if (!extractedTicker || monthlyAmount <= 0 || currentPrice <= 0) return;
       
-      const shares = Math.floor(monthlyAmount / currentPrice);
-      const investedAmount = shares * currentPrice;
+      const amountInStockCurrency = monthlyAmount / exchangeRate;
+      const rawShares = Math.floor(amountInStockCurrency / currentPrice);
+      const shares = Math.floor(rawShares / minLotSize) * minLotSize;
+      
+      const investedAmountInStockCurrency = shares * currentPrice;
+      const investedAmount = investedAmountInStockCurrency * exchangeRate;
       const remainder = monthlyAmount - investedAmount;
       
       const id = `${extractedTicker}-${selectedYear}-${selectedMonth}-${selectedPeriod}`;
@@ -833,14 +874,15 @@ export default function DCARecords() {
   const handleTrade = () => {
     if (tradePrice <= 0 || tradeShares <= 0) return;
     
-    const totalAmount = tradePrice * tradeShares;
+    const totalAmountInStockCurrency = tradePrice * (tradeType === 'dividend' ? 1 : tradeShares);
+    const totalAmount = totalAmountInStockCurrency * exchangeRate;
     
     if (tradeType === 'buy') {
        if (tradeStats.cashReserve < totalAmount) {
          alert("現金儲備不足！(Insufficient Cash Reserve)");
          return;
        }
-    } else {
+    } else if (tradeType === 'sell') {
       if (totalSharesHeld < tradeShares) {
         alert("持股不足！(Insufficient Shares)");
         return;
@@ -853,10 +895,10 @@ export default function DCARecords() {
       id: Date.now().toString(),
       ticker: ticker || selectedCategory,
       category: selectedCategory,
-      type: tradeType,
+      type: tradeType as 'buy' | 'sell' | 'withdraw' | 'dividend',
       date: formattedDate,
       price: tradePrice,
-      shares: tradeShares,
+      shares: tradeType === 'dividend' ? 0 : tradeShares,
       totalAmount,
     });
     
@@ -1188,33 +1230,58 @@ export default function DCARecords() {
                 </div>
               ) : (
                 <>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1">當時股價 ($)</label>
-                    <input
-                      type="number"
-                      value={currentPrice || ''}
-                      onChange={(e) => updateTabInput('currentPrice', Number(e.target.value))}
-                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-bold text-gray-900"
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-1">當時股價 ($)</label>
+                      <input
+                        type="number"
+                        value={currentPrice || ''}
+                        onChange={(e) => updateTabInput('currentPrice', Number(e.target.value))}
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-bold text-gray-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-1">匯率 (預設 {isUSStock ? '7.8' : '1'})</label>
+                      <input
+                        type="number"
+                        value={exchangeRate || ''}
+                        onChange={(e) => updateTabInput('exchangeRate', Number(e.target.value))}
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-bold text-gray-900"
+                      />
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1">當月每股派息 ($)</label>
-                    <input
-                      type="number"
-                      value={dividendPerShare || ''}
-                      onChange={(e) => updateTabInput('dividendPerShare', Number(e.target.value))}
-                      placeholder="0"
-                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-bold text-gray-900"
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-1">當月每股派息 ($)</label>
+                      <input
+                        type="number"
+                        value={dividendPerShare || ''}
+                        onChange={(e) => updateTabInput('dividendPerShare', Number(e.target.value))}
+                        placeholder="0"
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-bold text-gray-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-1">最低每手股數</label>
+                      <input
+                        type="number"
+                        value={minLotSize || ''}
+                        onChange={(e) => updateTabInput('minLotSize', Number(e.target.value))}
+                        placeholder="1"
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-bold text-gray-900"
+                      />
+                    </div>
                   </div>
 
                   {monthlyAmount > 0 && currentPrice > 0 && (
                     <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
                       <p className="text-sm text-blue-600 font-bold">可買股份數目:</p>
-                      <p className="text-2xl font-extrabold text-blue-800">{Math.floor(monthlyAmount / currentPrice)} 股</p>
+                      <p className="text-2xl font-extrabold text-blue-800">
+                        {Math.floor(Math.floor((monthlyAmount / exchangeRate) / currentPrice) / minLotSize) * minLotSize} 股
+                      </p>
                       <p className="text-xs text-blue-500 mt-1 font-bold">
-                        餘額 ${(monthlyAmount - Math.floor(monthlyAmount / currentPrice) * currentPrice).toFixed(2)} 將自動轉入現金儲備
+                        餘額 ${(monthlyAmount - (Math.floor(Math.floor((monthlyAmount / exchangeRate) / currentPrice) / minLotSize) * minLotSize) * currentPrice * exchangeRate).toFixed(2)} 將自動轉入現金儲備
                       </p>
                     </div>
                   )}
@@ -1315,7 +1382,10 @@ export default function DCARecords() {
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative z-10">
                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
                  <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">總投入本金</p>
-                 <p className="text-2xl font-extrabold text-blue-600">${dcaStats.totalInvested.toLocaleString()}</p>
+                 <p className="text-2xl font-extrabold text-blue-600">
+                   ${isUSStock ? (dcaStats.totalInvested / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : dcaStats.totalInvested.toLocaleString()}
+                   {isUSStock && <span className="text-sm font-normal text-gray-500 ml-1 block">(HKD ${dcaStats.totalInvested.toLocaleString()})</span>}
+                 </p>
                </div>
                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
                  <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">{isLiquidity ? '總結餘' : '總持貨量'}</p>
@@ -1323,11 +1393,17 @@ export default function DCARecords() {
                </div>
                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
                  <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">資產總值</p>
-                 <p className="text-2xl font-extrabold text-emerald-600">${isLiquidity ? totalSharesHeld.toLocaleString() : totalAssetValue.toLocaleString()}</p>
+                 <p className="text-2xl font-extrabold text-emerald-600">
+                   ${isLiquidity ? totalSharesHeld.toLocaleString() : (isUSStock ? (totalAssetValue / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : totalAssetValue.toLocaleString())}
+                   {!isLiquidity && isUSStock && <span className="text-sm font-normal text-gray-500 ml-1 block">(HKD ${totalAssetValue.toLocaleString()})</span>}
+                 </p>
                </div>
                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
                  <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">戶口總值 (含現金)</p>
-                 <p className="text-2xl font-extrabold text-indigo-600">${(isLiquidity ? totalSharesHeld : totalAssetValue + tradeStats.cashReserve).toLocaleString()}</p>
+                 <p className="text-2xl font-extrabold text-indigo-600">
+                   ${isLiquidity ? totalSharesHeld.toLocaleString() : (isUSStock ? ((totalAssetValue + tradeStats.cashReserve) / exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 }) : (totalAssetValue + tradeStats.cashReserve).toLocaleString())}
+                   {!isLiquidity && isUSStock && <span className="text-sm font-normal text-gray-500 ml-1 block">(HKD ${(totalAssetValue + tradeStats.cashReserve).toLocaleString()})</span>}
+                 </p>
                </div>
                <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-5 rounded-2xl border border-amber-100 shadow-sm md:col-span-2 lg:col-span-4">
                  <div className="flex justify-between items-center mb-1">
@@ -1500,6 +1576,12 @@ export default function DCARecords() {
                      >
                        賣出 (Sell)
                      </button>
+                     <button
+                       onClick={() => setTradeType('dividend')}
+                       className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${tradeType === 'dividend' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                     >
+                       收息 (Dividend)
+                     </button>
                    </div>
 
                    <div className="grid grid-cols-2 gap-4">
@@ -1530,48 +1612,65 @@ export default function DCARecords() {
                      </div>
                    </div>
 
-                   <div>
-                     <label className="block text-sm font-bold text-gray-700 mb-1">交易價格 ($)</label>
-                     <input
-                       type="number"
-                       value={tradePrice || ''}
-                       onChange={(e) => setTradePrice(Number(e.target.value))}
-                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
-                     />
-                   </div>
-
-                   <div>
-                     <div className="flex justify-between items-end mb-1">
-                       <label className="block text-sm font-bold text-gray-700">股份數目</label>
-                       {tradeType === 'buy' && tradePrice > 0 && (
-                         <span className="text-xs font-medium text-emerald-600">
-                           最高可購買: {(tradeStats.cashReserve / tradePrice).toFixed(4)} 股
-                         </span>
-                       )}
-                       {tradeType === 'sell' && (
-                         <span className="text-xs font-medium text-rose-600">
-                           最高可賣出: {totalSharesHeld.toFixed(4)} 股
-                         </span>
-                       )}
+                   {tradeType === 'dividend' ? (
+                     <div>
+                       <label className="block text-sm font-bold text-gray-700 mb-1">總利息/派息金額 ($)</label>
+                       <input
+                         type="number"
+                         value={tradePrice || ''}
+                         onChange={(e) => {
+                           setTradePrice(Number(e.target.value));
+                           setTradeShares(1); // For dividend, we just use price * 1
+                         }}
+                         className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
+                       />
                      </div>
-                     <input
-                       type="number"
-                       value={tradeShares || ''}
-                       onChange={(e) => setTradeShares(Number(e.target.value))}
-                       className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
-                     />
-                   </div>
+                   ) : (
+                     <>
+                       <div>
+                         <label className="block text-sm font-bold text-gray-700 mb-1">交易價格 ($)</label>
+                         <input
+                           type="number"
+                           value={tradePrice || ''}
+                           onChange={(e) => setTradePrice(Number(e.target.value))}
+                           className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
+                         />
+                       </div>
+
+                       <div>
+                         <div className="flex justify-between items-end mb-1">
+                           <label className="block text-sm font-bold text-gray-700">股份數目</label>
+                           {tradeType === 'buy' && tradePrice > 0 && (
+                             <span className="text-xs font-medium text-emerald-600">
+                               最高可購買: {(tradeStats.cashReserve / tradePrice).toFixed(4)} 股
+                             </span>
+                           )}
+                           {tradeType === 'sell' && (
+                             <span className="text-xs font-medium text-rose-600">
+                               最高可賣出: {totalSharesHeld.toFixed(4)} 股
+                             </span>
+                           )}
+                         </div>
+                         <input
+                           type="number"
+                           value={tradeShares || ''}
+                           onChange={(e) => setTradeShares(Number(e.target.value))}
+                           className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
+                         />
+                       </div>
+                     </>
+                   )}
 
                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex justify-between items-center">
-                     <span className="text-sm font-bold text-gray-500">總金額:</span>
-                     <span className="text-xl font-extrabold text-gray-900">${(tradePrice * tradeShares).toLocaleString()}</span>
+                     <span className="text-sm font-bold text-gray-500">總金額 (HKD):</span>
+                     <span className="text-xl font-extrabold text-gray-900">${(tradePrice * (tradeType === 'dividend' ? 1 : tradeShares) * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                    </div>
 
                    <button
                      onClick={handleTrade}
-                     className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-all hover:-translate-y-0.5 ${tradeType === 'buy' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' : 'bg-rose-600 hover:bg-rose-700 shadow-rose-200'}`}
+                     className={`w-full py-4 rounded-xl font-bold text-white shadow-lg transition-all hover:-translate-y-0.5 ${tradeType === 'buy' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' : tradeType === 'sell' ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-200' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200'}`}
                    >
-                     確認{tradeType === 'buy' ? '買入' : '賣出'}
+                     確認{tradeType === 'buy' ? '買入' : tradeType === 'sell' ? '賣出' : '收息'}
                    </button>
                 </div>
 
@@ -1588,13 +1687,13 @@ export default function DCARecords() {
                         <div key={trade.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100 hover:shadow-sm transition-all">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className={`text-xs font-bold px-2 py-0.5 rounded ${trade.type === 'buy' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                                {trade.type === 'buy' ? '買入' : '賣出'}
+                              <span className={`text-xs font-bold px-2 py-0.5 rounded ${trade.type === 'buy' ? 'bg-emerald-100 text-emerald-700' : trade.type === 'sell' ? 'bg-rose-100 text-rose-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                                {trade.type === 'buy' ? '買入' : trade.type === 'sell' ? '賣出' : '收息'}
                               </span>
                               <span className="text-xs text-gray-500">{trade.date}</span>
                             </div>
                             <p className="text-sm font-bold text-gray-900 mt-1">
-                              ${trade.price} x {trade.shares}股
+                              {trade.type === 'dividend' ? `總金額: $${trade.totalAmount}` : `$${trade.price} x ${trade.shares}股`}
                             </p>
                           </div>
                           <div className="text-right">
@@ -1806,7 +1905,7 @@ export default function DCARecords() {
                               strokeWidth={2} 
                               dot={<CustomDot />} 
                               activeDot={{ r: 6 }}
-                              name="結餘 (Balance)"
+                              name={isUSStock ? "結餘 (Balance USD)" : "結餘 (Balance)"}
                             />
                             <Line 
                               type="monotone" 
@@ -1815,7 +1914,7 @@ export default function DCARecords() {
                               strokeWidth={2} 
                               dot={false}
                               activeDot={{ r: 6 }}
-                              name="總資產價值 (Total Asset Value)"
+                              name={isUSStock ? "總資產價值 (Total Asset Value USD)" : "總資產價值 (Total Asset Value)"}
                             />
                           </>
                         ) : (
@@ -1827,7 +1926,7 @@ export default function DCARecords() {
                               strokeWidth={2} 
                               dot={<CustomDot />} 
                               activeDot={{ r: 6 }}
-                              name="股票每月價格 (Monthly Price)"
+                              name={isUSStock ? "股票每月價格 (Monthly Price USD)" : "股票每月價格 (Monthly Price)"}
                             />
                             <Line 
                               type="monotone" 
@@ -1836,7 +1935,7 @@ export default function DCARecords() {
                               strokeWidth={2} 
                               strokeDasharray="5 5"
                               dot={false}
-                              name="平均買入價 (Avg Cost)"
+                              name={isUSStock ? "平均買入價 (Avg Cost USD)" : "平均買入價 (Avg Cost)"}
                             />
                           </>
                         )}
@@ -1852,7 +1951,7 @@ export default function DCARecords() {
                          <div className="grid gap-4 text-xs font-semibold text-gray-500 uppercase" style={{ gridTemplateColumns: '1.2fr 0.8fr 1fr 1fr 1fr 1fr 1.2fr 1fr 1fr 1.2fr 0.8fr 0.8fr 1.2fr' }}>
                             <div>日期</div>
                             <div>類型</div>
-                            <div className="text-right">{isLiquidity ? '單位價值' : '股價 (USD)'}</div>
+                            <div className="text-right">{isLiquidity ? '單位價值' : (isUSStock ? '股價 (USD)' : '股價')}</div>
                             <div className="text-right">平均成本</div>
                             <div className="text-right">現價差幅</div>
                             <div className="text-right">變動金額</div>
@@ -1881,30 +1980,44 @@ export default function DCARecords() {
                                   {row.type}
                                 </span>
                               </div>
-                              <div className="text-right font-mono text-gray-600">${row.price.toFixed(2)}</div>
-                              <div className="text-right font-mono text-gray-600">${row.averageCost.toFixed(2)}</div>
+                              <div className="text-right font-mono text-gray-600">
+                                ${row.price.toFixed(2)}
+                                {!isLiquidity && isUSStock && <div className="text-[10px] text-gray-400">HKD ${(row.price * exchangeRate).toFixed(2)}</div>}
+                              </div>
+                              <div className="text-right font-mono text-gray-600">
+                                ${row.averageCost.toFixed(2)}
+                                {!isLiquidity && isUSStock && <div className="text-[10px] text-gray-400">HKD ${(row.averageCost * exchangeRate).toFixed(2)}</div>}
+                              </div>
                               <div className={`text-right font-mono font-bold ${row.percentageDiff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                 {row.percentageDiff > 0 ? '+' : ''}{row.percentageDiff.toFixed(2)}%
                               </div>
                               <div className="text-right font-mono text-gray-600">
-                                {row.type === 'Sell' ? '+' : '-'}${row.amount.toLocaleString()}
+                                {row.type === 'Sell' ? '+' : '-'}${row.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                {!isLiquidity && isUSStock && <div className="text-[10px] text-gray-400">HKD ${row.amountInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
-                              <div className="text-right font-mono text-gray-600">${row.cumulativePrincipal.toLocaleString()}</div>
+                              <div className="text-right font-mono text-gray-600">
+                                ${row.cumulativePrincipal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                {!isLiquidity && isUSStock && <div className="text-[10px] text-gray-400">HKD ${row.cumulativePrincipalInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                              </div>
                               <div className="text-right font-mono text-gray-600">
                                 {row.type === 'Sell' ? '-' : '+'}{row.shares.toFixed(4)}
                               </div>
                               <div className="text-right font-mono text-gray-600">{row.cumulativeShares.toFixed(4)}</div>
                               <div className="text-right font-mono font-bold text-blue-600">
                                 ${row.currentAssetValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                {!isLiquidity && isUSStock && <div className="text-[10px] text-blue-400 font-normal">HKD ${row.currentAssetValueInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
                               <div className="text-right font-mono text-gray-600">
                                 {row.dividendPerShare ? `$${row.dividendPerShare.toFixed(2)}` : '-'}
+                                {!isLiquidity && isUSStock && row.dividendPerShare > 0 && <div className="text-[10px] text-gray-400">HKD ${(row.dividendPerShare * exchangeRate).toFixed(2)}</div>}
                               </div>
                               <div className="text-right font-mono text-emerald-600 font-bold">
                                 {row.dividendReceived ? `+$${row.dividendReceived.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '-'}
+                                {!isLiquidity && isUSStock && row.dividendReceived > 0 && <div className="text-[10px] text-emerald-400 font-normal">HKD ${row.dividendReceivedInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
                               <div className="text-right font-mono font-extrabold text-emerald-700">
                                 ${row.totalAssetValueWithDividends.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                {!isLiquidity && isUSStock && <div className="text-[10px] text-emerald-500 font-normal">HKD ${row.totalAssetValueWithDividendsInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
                             </div>
                           ))}

@@ -136,7 +136,7 @@ export type TradeRecord = {
   id: string;
   ticker: string;
   category?: string;
-  type: 'buy' | 'sell' | 'withdraw';
+  type: 'buy' | 'sell' | 'withdraw' | 'dividend';
   date: string; // YYYY-MM-DD
   price: number;
   shares: number;
