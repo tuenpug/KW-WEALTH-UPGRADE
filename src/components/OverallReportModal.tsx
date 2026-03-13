@@ -31,39 +31,48 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
     if (!reportRef.current) return;
     try {
       const element = reportRef.current;
-      
-      // Expand all scrollable containers
-      const scrollContainers = element.querySelectorAll('.custom-scrollbar');
-      const originalStyles: { el: HTMLElement, overflow: string, height: string }[] = [];
-      
-      scrollContainers.forEach((container) => {
-        const el = container as HTMLElement;
-        originalStyles.push({ el, overflow: el.style.overflow, height: el.style.height });
-        el.style.overflow = 'visible';
-        el.style.height = 'auto';
-      });
-      
-      const originalElementHeight = element.style.height;
-      const originalElementOverflow = element.style.overflow;
-      element.style.height = 'auto';
-      element.style.overflow = 'visible';
+      const targetWidth = Math.max(element.scrollWidth, 1200);
 
       const canvas = await html2canvas(element, {
         scale: 2,
         backgroundColor: "#ffffff",
         useCORS: true,
         logging: false,
-        allowTaint: true,
-        windowWidth: element.scrollWidth,
-        windowHeight: element.scrollHeight
-      });
+        width: targetWidth,
+        windowWidth: targetWidth,
+        onclone: (clonedDoc, clonedElement) => {
+          // Force the cloned element to expand fully
+          clonedElement.style.width = `${targetWidth}px`;
+          clonedElement.style.minWidth = `${targetWidth}px`;
+          clonedElement.style.height = 'auto';
+          clonedElement.style.maxHeight = 'none';
+          clonedElement.style.overflow = 'visible';
+          clonedElement.style.position = 'static';
+          clonedElement.style.transform = 'none';
 
-      // Restore styles
-      element.style.height = originalElementHeight;
-      element.style.overflow = originalElementOverflow;
-      originalStyles.forEach(({ el, overflow, height }) => {
-        el.style.overflow = overflow;
-        el.style.height = height;
+          // Expand all scrollable containers inside the clone
+          const scrollContainers = clonedElement.querySelectorAll('.custom-scrollbar, #report-table-body, .overflow-x-auto');
+          scrollContainers.forEach((el) => {
+            const htmlEl = el as HTMLElement;
+            htmlEl.style.overflow = 'visible';
+            htmlEl.style.height = 'auto';
+            htmlEl.style.maxHeight = 'none';
+            htmlEl.style.width = '100%';
+          });
+
+          // Unconstrain all parent elements up to the body
+          let parent = clonedElement.parentElement;
+          while (parent && parent !== clonedDoc.body) {
+            parent.style.overflow = 'visible';
+            parent.style.position = 'static';
+            parent.style.transform = 'none';
+            parent.style.width = 'auto';
+            parent.style.height = 'auto';
+            parent.style.maxHeight = 'none';
+            parent.style.maxWidth = 'none';
+            parent = parent.parentElement;
+          }
+        }
       });
 
       const imgData = canvas.toDataURL("image/jpeg", 1.0);
@@ -147,14 +156,16 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
       });
 
       state.tradeRecords.forEach(r => {
+        const isPositive = r.type === 'sell' || r.type === 'dividend';
+        const amount = r.type === 'withdraw' ? 0 : (isPositive ? r.totalAmount : -r.totalAmount);
         timeline.push({
           date: new Date(r.date),
           displayDate: `${r.date} (${r.ticker})`,
-          type: r.type === 'buy' ? 'Trade Buy' : 'Trade Sell',
+          type: r.type === 'buy' ? 'Trade Buy' : r.type === 'sell' ? 'Trade Sell' : r.type === 'dividend' ? 'Dividend' : 'Withdraw',
           price: 1,
-          amount: r.type === 'sell' ? r.totalAmount : -r.totalAmount,
-          shares: r.type === 'sell' ? r.totalAmount : -r.totalAmount,
-          totalAmount: r.type === 'sell' ? r.totalAmount : -r.totalAmount,
+          amount: amount,
+          shares: amount,
+          totalAmount: amount,
           dividendPerShare: 0,
         });
       });
@@ -181,13 +192,13 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
         timeline.push({
           date: new Date(r.date),
           displayDate: r.date,
-          type: r.type === 'buy' ? 'Buy' : 'Sell',
+          type: r.type === 'buy' ? 'Buy' : r.type === 'sell' ? 'Sell' : 'Dividend',
           price: r.price,
           amount: r.totalAmount / exchangeRate,
           amountInHKD: r.totalAmount,
           shares: r.shares,
           totalAmount: (r.type === 'buy' ? r.totalAmount : -r.totalAmount) / exchangeRate,
-          dividendPerShare: 0,
+          dividendPerShare: r.type === 'dividend' ? r.price : 0,
         });
       });
     }
@@ -216,15 +227,18 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
           totalAssetValueWithDividends: cumulativeShares,
         };
       } else {
+        let currentDividend = 0;
         if (item.type === 'DCA' || item.type === 'Buy') {
           cumulativePrincipal += item.amount;
           cumulativeShares += item.shares;
+          currentDividend = cumulativeShares * (item.dividendPerShare || 0);
         } else if (item.type === 'Sell') {
           cumulativePrincipal -= item.amount;
           cumulativeShares -= item.shares;
+        } else if (item.type === 'Dividend') {
+          currentDividend = item.dividendPerShare * item.shares;
         }
 
-        const currentDividend = cumulativeShares * (item.dividendPerShare || 0);
         cumulativeDividends += currentDividend;
 
         const currentAssetValue = cumulativeShares * item.price;
@@ -457,45 +471,45 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
                             </span>
                           </div>
                           <div className="text-right font-mono">
-                            ${row.price.toFixed(2)}
-                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400">HKD ${(row.price * cr.exchangeRate).toFixed(2)}</div>}
+                            {row.type === 'Dividend' ? '-' : '$' + row.price.toFixed(2)}
+                            {!cr.isLiquidity && cr.isUSStock && row.type !== 'Dividend' && <div className="text-[10px] text-gray-400">HKD ${(row.price * cr.exchangeRate).toFixed(2)}</div>}
                           </div>
                           <div className="text-right font-mono">
                             ${row.averageCost.toFixed(2)}
                             {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400">HKD ${(row.averageCost * cr.exchangeRate).toFixed(2)}</div>}
                           </div>
                           <div className={`text-right font-mono font-bold ${row.percentageDiff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {row.percentageDiff > 0 ? '+' : ''}{row.percentageDiff.toFixed(2)}%
+                            {row.type === 'Dividend' ? '-' : (row.percentageDiff > 0 ? '+' : '') + row.percentageDiff.toFixed(2) + '%'}
                           </div>
                           <div className={`text-right font-mono font-bold ${row.amount > 0 ? 'text-emerald-600' : row.amount < 0 ? 'text-rose-600' : 'text-gray-600'}`}>
-                            {row.amount > 0 ? '+' : ''}{row.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.amount * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+                            {row.type === 'Dividend' ? '-' : (row.amount > 0 ? '+' : '') + row.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {!cr.isLiquidity && cr.isUSStock && row.type !== 'Dividend' && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.amount * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                           <div className="text-right font-mono font-bold text-gray-900">
                             ${row.cumulativePrincipal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.cumulativePrincipal * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                           <div className={`text-right font-mono ${row.shares > 0 ? 'text-emerald-600' : row.shares < 0 ? 'text-rose-600' : 'text-gray-600'}`}>
-                            {row.shares > 0 ? '+' : ''}{row.shares.toFixed(2)}
+                            {row.type === 'Dividend' ? '-' : (row.shares > 0 ? '+' : '') + row.shares.toFixed(2)}
                           </div>
                           <div className="text-right font-mono font-bold text-blue-600">
                             {row.cumulativeShares.toFixed(2)}
                           </div>
                           <div className="text-right font-mono font-bold text-gray-900">
-                            ${row.currentAssetValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.currentAssetValue * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+                            {row.type === 'Dividend' ? '-' : '$' + row.currentAssetValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {!cr.isLiquidity && cr.isUSStock && row.type !== 'Dividend' && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.currentAssetValue * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                           <div className="text-right font-mono text-gray-500">
-                            ${row.dividendPerShare.toFixed(2)}
+                            {row.dividendPerShare ? `$${row.dividendPerShare.toFixed(2)}` : '-'}
                             {!cr.isLiquidity && cr.isUSStock && row.dividendPerShare > 0 && <div className="text-[10px] text-gray-400 font-normal">HKD ${(row.dividendPerShare * cr.exchangeRate).toFixed(2)}</div>}
                           </div>
                           <div className="text-right font-mono text-emerald-600">
-                            ${row.dividendReceived.toFixed(2)}
+                            {row.dividendReceived ? `+$${row.dividendReceived.toFixed(2)}` : '-'}
                             {!cr.isLiquidity && cr.isUSStock && row.dividendReceived > 0 && <div className="text-[10px] text-emerald-400 font-normal">HKD ${(row.dividendReceived * cr.exchangeRate).toFixed(2)}</div>}
                           </div>
                           <div className="text-right font-mono font-bold text-indigo-600">
-                            ${row.totalAssetValueWithDividends.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            {!cr.isLiquidity && cr.isUSStock && <div className="text-[10px] text-indigo-400 font-normal">HKD ${(row.totalAssetValueWithDividends * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
+                            {row.type === 'Dividend' ? '-' : '$' + row.totalAssetValueWithDividends.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {!cr.isLiquidity && cr.isUSStock && row.type !== 'Dividend' && <div className="text-[10px] text-indigo-400 font-normal">HKD ${(row.totalAssetValueWithDividends * cr.exchangeRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>}
                           </div>
                         </div>
                         ))}

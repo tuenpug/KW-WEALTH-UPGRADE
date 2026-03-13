@@ -349,6 +349,43 @@ export default function DCARecords() {
       }
     });
 
+    // Calculate total dividends from DCA records across all categories
+    // To do this accurately, we need to interleave DCA and Trade records for each category
+    const categories = Array.from(new Set([...state.dcaRecords.map(r => r.category || "一般定投"), ...state.tradeRecords.map(r => r.category || "一般定投")]));
+    
+    categories.forEach(cat => {
+      const isCatLiquidity = cat === "現金儲備／定期" || cat === "流動資金及定期存款";
+      if (isCatLiquidity) return;
+
+      const catDCA = state.dcaRecords.filter(r => (r.category || "一般定投") === cat);
+      const catTrades = state.tradeRecords.filter(r => (r.category || "一般定投") === cat);
+      
+      const timeline: any[] = [];
+      catDCA.forEach(r => {
+        const date = new Date(r.year, r.month - 1, r.period === "15號" ? 15 : 1);
+        timeline.push({ date, type: 'DCA', shares: r.shares, dividendPerShare: r.dividendPerShare || 0, ticker: r.ticker });
+      });
+      catTrades.forEach(r => {
+        timeline.push({ date: new Date(r.date), type: r.type, shares: r.shares, dividendPerShare: 0, ticker: r.ticker });
+      });
+      
+      timeline.sort((a, b) => a.date.getTime() - b.date.getTime());
+      
+      let cumulativeShares = 0;
+      timeline.forEach(item => {
+        if (item.type === 'DCA' || item.type === 'buy') {
+          cumulativeShares += item.shares;
+          if (item.type === 'DCA' && item.dividendPerShare > 0) {
+            const isUS = item.ticker && /^[A-Za-z]/.test(item.ticker);
+            const rate = isUS ? 7.8 : 1;
+            cashReserve += (cumulativeShares * item.dividendPerShare) * rate;
+          }
+        } else if (item.type === 'sell') {
+          cumulativeShares -= item.shares;
+        }
+      });
+    });
+
     let tradeShares = 0;
 
     // Cash is global, but shares are per category
@@ -411,6 +448,33 @@ export default function DCARecords() {
   const totalSharesHeld = isLiquidity ? tradeStats.liquidityValue : dcaStats.totalShares;
   const totalAssetValue = totalSharesHeld * realTimePrice * exchangeRate;
   const totalAccountValue = isLiquidity ? totalSharesHeld : totalAssetValue + tradeStats.cashReserve;
+  
+  const sharesAtTradeDate = useMemo(() => {
+    if (isLiquidity) return 0;
+    const date = new Date(tradeYear, tradeMonth - 1, 1);
+    
+    let shares = categoryDCARecords
+      .filter(r => new Date(r.year, r.month - 1, 1) <= date)
+      .reduce((acc, r) => acc + r.shares, 0);
+      
+    categoryTradeRecords
+      .filter(t => new Date(t.date) <= date)
+      .forEach(trade => {
+        if (trade.type === 'buy') {
+          shares += trade.shares;
+        } else if (trade.type === 'sell') {
+          shares -= trade.shares;
+        }
+      });
+      
+    return shares;
+  }, [categoryDCARecords, categoryTradeRecords, tradeYear, tradeMonth, isLiquidity]);
+
+  useEffect(() => {
+    if (tradeType === 'dividend') {
+      setTradeShares(sharesAtTradeDate);
+    }
+  }, [tradeType, sharesAtTradeDate]);
   
   const adviceLevels = [
     { label: "保守 (Conservative)", exitPct: 110, reEntryFactor: 0.9, color: "text-emerald-400", bg: "bg-gray-800/50", border: "border-gray-700", icon: "text-emerald-400" },
@@ -706,7 +770,7 @@ export default function DCARecords() {
           amountInHKD: r.totalAmount,
           shares: r.shares,
           totalAmount: (r.type === 'buy' ? r.totalAmount : -r.totalAmount) / exchangeRate,
-          dividendPerShare: r.type === 'dividend' ? r.totalAmount / exchangeRate : 0, // For dividend trade, totalAmount is the total dividend received
+          dividendPerShare: r.type === 'dividend' ? r.price : 0,
         });
       });
     }
@@ -744,7 +808,7 @@ export default function DCARecords() {
           cumulativePrincipal -= item.amount;
           cumulativeShares -= item.shares;
         } else if (item.type === 'Dividend') {
-          currentDividend = item.dividendPerShare || 0;
+          currentDividend = item.dividendPerShare * item.shares;
         }
 
         cumulativeDividends += currentDividend;
@@ -874,7 +938,7 @@ export default function DCARecords() {
   const handleTrade = () => {
     if (tradePrice <= 0 || tradeShares <= 0) return;
     
-    const totalAmountInStockCurrency = tradePrice * (tradeType === 'dividend' ? 1 : tradeShares);
+    const totalAmountInStockCurrency = tradePrice * tradeShares;
     const totalAmount = totalAmountInStockCurrency * exchangeRate;
     
     if (tradeType === 'buy') {
@@ -954,32 +1018,88 @@ export default function DCARecords() {
     try {
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      const originalHeight = reportRef.current.style.height;
-      reportRef.current.style.height = 'auto';
+      const element = reportRef.current;
+      
+      // Expand all scrollable containers
+      const scrollContainers = element.querySelectorAll('.custom-scrollbar, #report-table-body, .overflow-x-auto');
+      const originalStyles: { el: HTMLElement, overflow: string, height: string, maxHeight: string }[] = [];
+      
+      scrollContainers.forEach((container) => {
+        const el = container as HTMLElement;
+        originalStyles.push({ el, overflow: el.style.overflow, height: el.style.height, maxHeight: el.style.maxHeight });
+        el.style.overflow = 'visible';
+        el.style.height = 'auto';
+        el.style.maxHeight = 'none';
+      });
 
-      const canvas = await html2canvas(reportRef.current, {
+      const targetWidth = Math.max(element.scrollWidth, 1200);
+
+      const originalElementStyles = {
+        height: element.style.height,
+        overflow: element.style.overflow,
+        width: element.style.width,
+        maxWidth: element.style.maxWidth,
+        minWidth: element.style.minWidth,
+        flexShrink: element.style.flexShrink,
+        position: element.style.position,
+        left: element.style.left,
+        top: element.style.top,
+        transform: element.style.transform,
+      };
+
+      element.style.height = 'auto';
+      element.style.overflow = 'visible';
+      element.style.width = `${targetWidth}px`;
+      element.style.minWidth = `${targetWidth}px`;
+      element.style.flexShrink = '0';
+      element.style.maxWidth = 'none';
+      element.style.position = 'absolute';
+      element.style.left = '0px';
+      element.style.top = '0px';
+      element.style.transform = 'none';
+
+      const parent = element.parentElement;
+      const originalParentStyles = parent ? {
+        overflow: parent.style.overflow,
+        position: parent.style.position,
+        alignItems: parent.style.alignItems,
+        justifyContent: parent.style.justifyContent,
+        padding: parent.style.padding,
+      } : null;
+
+      if (parent) {
+        parent.style.overflow = 'visible';
+        parent.style.position = 'absolute';
+        parent.style.alignItems = 'flex-start';
+        parent.style.justifyContent = 'flex-start';
+        parent.style.padding = '0px';
+      }
+
+      // Wait for browser to reflow the layout before capturing
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      const canvas = await html2canvas(element, {
         scale: 2,
         backgroundColor: "#ffffff",
         useCORS: true,
         logging: false,
         allowTaint: true,
-        windowWidth: reportRef.current.scrollWidth,
-        windowHeight: reportRef.current.scrollHeight,
-        onclone: (clonedDoc) => {
-          const element = clonedDoc.getElementById('report-table-body');
-          if (element) {
-            element.style.overflow = 'visible'; 
-            element.style.height = 'auto';
-            element.style.maxHeight = 'none';
-          }
-          const header = clonedDoc.querySelector('.overflow-x-auto');
-          if (header) {
-             (header as HTMLElement).style.overflow = 'visible';
-          }
-        }
+        width: targetWidth,
+        height: element.scrollHeight,
+        windowWidth: targetWidth,
+        windowHeight: element.scrollHeight
       });
       
-      reportRef.current.style.height = originalHeight;
+      // Restore styles
+      Object.assign(element.style, originalElementStyles);
+      if (parent && originalParentStyles) {
+        Object.assign(parent.style, originalParentStyles);
+      }
+      originalStyles.forEach(({ el, overflow, height, maxHeight }) => {
+        el.style.overflow = overflow;
+        el.style.height = height;
+        el.style.maxHeight = maxHeight;
+      });
       const url = canvas.toDataURL("image/jpeg", 1.0);
       const a = document.createElement("a");
       a.href = url;
@@ -997,15 +1117,64 @@ export default function DCARecords() {
     if (!reportRef.current) return;
     try {
       const element = reportRef.current;
-      const scrollContainer = element.querySelector('#report-table-body') as HTMLElement;
       
-      const originalOverflow = scrollContainer.style.overflow;
-      const originalHeight = scrollContainer.style.height;
-      const originalElementHeight = element.style.height;
+      // Expand all scrollable containers
+      const scrollContainers = element.querySelectorAll('.custom-scrollbar, #report-table-body, .overflow-x-auto');
+      const originalStyles: { el: HTMLElement, overflow: string, height: string, maxHeight: string }[] = [];
       
-      scrollContainer.style.overflow = 'visible';
-      scrollContainer.style.height = 'auto';
+      scrollContainers.forEach((container) => {
+        const el = container as HTMLElement;
+        originalStyles.push({ el, overflow: el.style.overflow, height: el.style.height, maxHeight: el.style.maxHeight });
+        el.style.overflow = 'visible';
+        el.style.height = 'auto';
+        el.style.maxHeight = 'none';
+      });
+
+      const targetWidth = Math.max(element.scrollWidth, 1200);
+
+      const originalElementStyles = {
+        height: element.style.height,
+        overflow: element.style.overflow,
+        width: element.style.width,
+        maxWidth: element.style.maxWidth,
+        minWidth: element.style.minWidth,
+        flexShrink: element.style.flexShrink,
+        position: element.style.position,
+        left: element.style.left,
+        top: element.style.top,
+        transform: element.style.transform,
+      };
+
       element.style.height = 'auto';
+      element.style.overflow = 'visible';
+      element.style.width = `${targetWidth}px`;
+      element.style.minWidth = `${targetWidth}px`;
+      element.style.flexShrink = '0';
+      element.style.maxWidth = 'none';
+      element.style.position = 'absolute';
+      element.style.left = '0px';
+      element.style.top = '0px';
+      element.style.transform = 'none';
+
+      const parent = element.parentElement;
+      const originalParentStyles = parent ? {
+        overflow: parent.style.overflow,
+        position: parent.style.position,
+        alignItems: parent.style.alignItems,
+        justifyContent: parent.style.justifyContent,
+        padding: parent.style.padding,
+      } : null;
+
+      if (parent) {
+        parent.style.overflow = 'visible';
+        parent.style.position = 'absolute';
+        parent.style.alignItems = 'flex-start';
+        parent.style.justifyContent = 'flex-start';
+        parent.style.padding = '0px';
+      }
+
+      // Wait for browser to reflow the layout before capturing
+      await new Promise(resolve => setTimeout(resolve, 150));
 
       const canvas = await html2canvas(element, {
         scale: 2,
@@ -1013,26 +1182,33 @@ export default function DCARecords() {
         useCORS: true,
         logging: false,
         allowTaint: true,
-        windowWidth: element.scrollWidth,
+        width: targetWidth,
+        height: element.scrollHeight,
+        windowWidth: targetWidth,
         windowHeight: element.scrollHeight
       });
 
-      scrollContainer.style.overflow = originalOverflow;
-      scrollContainer.style.height = originalHeight;
-      element.style.height = originalElementHeight;
+      // Restore styles
+      Object.assign(element.style, originalElementStyles);
+      if (parent && originalParentStyles) {
+        Object.assign(parent.style, originalParentStyles);
+      }
+      originalStyles.forEach(({ el, overflow, height, maxHeight }) => {
+        el.style.overflow = overflow;
+        el.style.height = height;
+        el.style.maxHeight = maxHeight;
+      });
 
       const imgData = canvas.toDataURL("image/jpeg", 1.0);
       
-      const pdfWidth = 297; // A4 landscape width in mm
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      
+      // Always use landscape for overall report to fit wide tables
       const pdf = new jsPDF({
         orientation: 'l',
-        unit: 'mm',
-        format: [pdfWidth, pdfHeight > 0 ? pdfHeight : 210]
+        unit: 'px',
+        format: [canvas.width, canvas.height]
       });
 
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
       pdf.save(`dca_report_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) {
       console.error("Failed to export PDF", err);
@@ -1614,13 +1790,18 @@ export default function DCARecords() {
 
                    {tradeType === 'dividend' ? (
                      <div>
-                       <label className="block text-sm font-bold text-gray-700 mb-1">總利息/派息金額 ($)</label>
+                       <div className="flex justify-between items-end mb-1">
+                         <label className="block text-sm font-bold text-gray-700">每股派息金額 ($)</label>
+                         <span className="text-xs font-medium text-blue-600">
+                           當時持股: {sharesAtTradeDate.toFixed(4)} 股
+                         </span>
+                       </div>
                        <input
                          type="number"
                          value={tradePrice || ''}
                          onChange={(e) => {
                            setTradePrice(Number(e.target.value));
-                           setTradeShares(1); // For dividend, we just use price * 1
+                           setTradeShares(sharesAtTradeDate);
                          }}
                          className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 font-bold text-gray-900"
                        />
@@ -1663,7 +1844,7 @@ export default function DCARecords() {
 
                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex justify-between items-center">
                      <span className="text-sm font-bold text-gray-500">總金額 (HKD):</span>
-                     <span className="text-xl font-extrabold text-gray-900">${(tradePrice * (tradeType === 'dividend' ? 1 : tradeShares) * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                     <span className="text-xl font-extrabold text-gray-900">${(tradePrice * tradeShares * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                    </div>
 
                    <button
@@ -1981,31 +2162,31 @@ export default function DCARecords() {
                                 </span>
                               </div>
                               <div className="text-right font-mono text-gray-600">
-                                ${row.price.toFixed(2)}
-                                {!isLiquidity && isUSStock && <div className="text-[10px] text-gray-400">HKD ${(row.price * exchangeRate).toFixed(2)}</div>}
+                                {row.type === 'Dividend' ? '-' : '$' + row.price.toFixed(2)}
+                                {!isLiquidity && isUSStock && row.type !== 'Dividend' && <div className="text-[10px] text-gray-400">HKD ${(row.price * exchangeRate).toFixed(2)}</div>}
                               </div>
                               <div className="text-right font-mono text-gray-600">
                                 ${row.averageCost.toFixed(2)}
                                 {!isLiquidity && isUSStock && <div className="text-[10px] text-gray-400">HKD ${(row.averageCost * exchangeRate).toFixed(2)}</div>}
                               </div>
                               <div className={`text-right font-mono font-bold ${row.percentageDiff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                                {row.percentageDiff > 0 ? '+' : ''}{row.percentageDiff.toFixed(2)}%
+                                {row.type === 'Dividend' ? '-' : (row.percentageDiff > 0 ? '+' : '') + row.percentageDiff.toFixed(2) + '%'}
                               </div>
                               <div className="text-right font-mono text-gray-600">
-                                {row.type === 'Sell' ? '+' : '-'}${row.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                {!isLiquidity && isUSStock && <div className="text-[10px] text-gray-400">HKD ${row.amountInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                                {row.type === 'Dividend' ? '-' : (row.type === 'Sell' ? '+' : '-') + '$' + row.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                {!isLiquidity && isUSStock && row.type !== 'Dividend' && <div className="text-[10px] text-gray-400">HKD ${row.amountInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
                               <div className="text-right font-mono text-gray-600">
                                 ${row.cumulativePrincipal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                                 {!isLiquidity && isUSStock && <div className="text-[10px] text-gray-400">HKD ${row.cumulativePrincipalInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
                               <div className="text-right font-mono text-gray-600">
-                                {row.type === 'Sell' ? '-' : '+'}{row.shares.toFixed(4)}
+                                {row.type === 'Dividend' ? '-' : (row.type === 'Sell' ? '-' : '+') + row.shares.toFixed(4)}
                               </div>
                               <div className="text-right font-mono text-gray-600">{row.cumulativeShares.toFixed(4)}</div>
                               <div className="text-right font-mono font-bold text-blue-600">
-                                ${row.currentAssetValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                {!isLiquidity && isUSStock && <div className="text-[10px] text-blue-400 font-normal">HKD ${row.currentAssetValueInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                                {row.type === 'Dividend' ? '-' : '$' + row.currentAssetValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                {!isLiquidity && isUSStock && row.type !== 'Dividend' && <div className="text-[10px] text-blue-400 font-normal">HKD ${row.currentAssetValueInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
                               <div className="text-right font-mono text-gray-600">
                                 {row.dividendPerShare ? `$${row.dividendPerShare.toFixed(2)}` : '-'}
@@ -2016,8 +2197,8 @@ export default function DCARecords() {
                                 {!isLiquidity && isUSStock && row.dividendReceived > 0 && <div className="text-[10px] text-emerald-400 font-normal">HKD ${row.dividendReceivedInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
                               <div className="text-right font-mono font-extrabold text-emerald-700">
-                                ${row.totalAssetValueWithDividends.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                {!isLiquidity && isUSStock && <div className="text-[10px] text-emerald-500 font-normal">HKD ${row.totalAssetValueWithDividendsInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                                {row.type === 'Dividend' ? '-' : '$' + row.totalAssetValueWithDividends.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                {!isLiquidity && isUSStock && row.type !== 'Dividend' && <div className="text-[10px] text-emerald-500 font-normal">HKD ${row.totalAssetValueWithDividendsInHKD?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
                               </div>
                             </div>
                           ))}
