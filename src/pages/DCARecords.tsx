@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useAppContext, DCARecord, TradeRecord } from "../store";
 import { motion, AnimatePresence } from "motion/react";
-import html2canvas from "html2canvas";
+import { toJpeg } from "html-to-image";
 import CandlestickChart from "../components/CandlestickChart";
 import { jsPDF } from "jspdf";
 import {
@@ -1016,93 +1016,76 @@ export default function DCARecords() {
   const handleExportJPEG = async () => {
     if (!reportRef.current) return;
     try {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      const printContainer = document.createElement('div');
+      printContainer.style.position = 'absolute';
+      printContainer.style.top = '-9999px';
+      printContainer.style.left = '0';
+      printContainer.style.backgroundColor = '#ffffff';
+      printContainer.style.padding = '24px';
+      printContainer.classList.add('print-force-expand');
+      
+      const clone = reportRef.current.cloneNode(true) as HTMLElement;
+      
+      clone.classList.remove('h-full', 'w-full');
+      clone.style.height = 'auto';
+      clone.style.width = 'max-content';
+      clone.style.minWidth = '100%';
+      
+      const style = document.createElement('style');
+      style.innerHTML = `
+        .print-force-expand * {
+          overflow: visible !important;
+          max-width: none !important;
+          max-height: none !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] {
+          width: max-content !important;
+          min-width: 100% !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] .grid {
+          width: max-content !important;
+          min-width: 100% !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] .grid > div {
+          white-space: nowrap !important;
+        }
+      `;
+      printContainer.appendChild(style);
+      printContainer.appendChild(clone);
+      document.body.appendChild(printContainer);
 
-      const element = reportRef.current;
-      
-      // Expand all scrollable containers
-      const scrollContainers = element.querySelectorAll('.custom-scrollbar, #report-table-body, .overflow-x-auto');
-      const originalStyles: { el: HTMLElement, overflow: string, height: string, maxHeight: string }[] = [];
-      
-      scrollContainers.forEach((container) => {
-        const el = container as HTMLElement;
-        originalStyles.push({ el, overflow: el.style.overflow, height: el.style.height, maxHeight: el.style.maxHeight });
-        el.style.overflow = 'visible';
-        el.style.height = 'auto';
-        el.style.maxHeight = 'none';
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      let maxWidth = 1600;
+      const allElements = printContainer.querySelectorAll('*');
+      allElements.forEach(el => {
+        if (el.scrollWidth > maxWidth) {
+          maxWidth = el.scrollWidth;
+        }
       });
 
-      const targetWidth = Math.max(element.scrollWidth, 1200);
+      maxWidth += 48;
 
-      const originalElementStyles = {
-        height: element.style.height,
-        overflow: element.style.overflow,
-        width: element.style.width,
-        maxWidth: element.style.maxWidth,
-        minWidth: element.style.minWidth,
-        flexShrink: element.style.flexShrink,
-        position: element.style.position,
-        left: element.style.left,
-        top: element.style.top,
-        transform: element.style.transform,
-      };
+      printContainer.style.width = `${maxWidth}px`;
+      clone.style.width = `${maxWidth}px`;
 
-      element.style.height = 'auto';
-      element.style.overflow = 'visible';
-      element.style.width = `${targetWidth}px`;
-      element.style.minWidth = `${targetWidth}px`;
-      element.style.flexShrink = '0';
-      element.style.maxWidth = 'none';
-      element.style.position = 'absolute';
-      element.style.left = '0px';
-      element.style.top = '0px';
-      element.style.transform = 'none';
-
-      const parent = element.parentElement;
-      const originalParentStyles = parent ? {
-        overflow: parent.style.overflow,
-        position: parent.style.position,
-        alignItems: parent.style.alignItems,
-        justifyContent: parent.style.justifyContent,
-        padding: parent.style.padding,
-      } : null;
-
-      if (parent) {
-        parent.style.overflow = 'visible';
-        parent.style.position = 'absolute';
-        parent.style.alignItems = 'flex-start';
-        parent.style.justifyContent = 'flex-start';
-        parent.style.padding = '0px';
-      }
-
-      // Wait for browser to reflow the layout before capturing
-      await new Promise(resolve => setTimeout(resolve, 150));
-
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        logging: false,
-        allowTaint: true,
-        width: targetWidth,
-        height: element.scrollHeight,
-        windowWidth: targetWidth,
-        windowHeight: element.scrollHeight
+      const dataUrl = await toJpeg(printContainer, {
+        quality: 0.95,
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+        width: maxWidth,
+        filter: (node: any) => {
+          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
+            return false;
+          }
+          return true;
+        },
       });
+
+      document.body.removeChild(printContainer);
       
-      // Restore styles
-      Object.assign(element.style, originalElementStyles);
-      if (parent && originalParentStyles) {
-        Object.assign(parent.style, originalParentStyles);
-      }
-      originalStyles.forEach(({ el, overflow, height, maxHeight }) => {
-        el.style.overflow = overflow;
-        el.style.height = height;
-        el.style.maxHeight = maxHeight;
-      });
-      const url = canvas.toDataURL("image/jpeg", 1.0);
       const a = document.createElement("a");
-      a.href = url;
+      a.href = dataUrl;
       a.download = `dca_report_${new Date().toISOString().split('T')[0]}.jpg`;
       document.body.appendChild(a);
       a.click();
@@ -1116,99 +1099,99 @@ export default function DCARecords() {
   const handleExportPDF = async () => {
     if (!reportRef.current) return;
     try {
-      const element = reportRef.current;
+      const printContainer = document.createElement('div');
+      printContainer.style.position = 'absolute';
+      printContainer.style.top = '-9999px';
+      printContainer.style.left = '0';
+      printContainer.style.backgroundColor = '#ffffff';
+      printContainer.style.padding = '24px';
+      printContainer.classList.add('print-force-expand');
       
-      // Expand all scrollable containers
-      const scrollContainers = element.querySelectorAll('.custom-scrollbar, #report-table-body, .overflow-x-auto');
-      const originalStyles: { el: HTMLElement, overflow: string, height: string, maxHeight: string }[] = [];
+      const clone = reportRef.current.cloneNode(true) as HTMLElement;
       
-      scrollContainers.forEach((container) => {
-        const el = container as HTMLElement;
-        originalStyles.push({ el, overflow: el.style.overflow, height: el.style.height, maxHeight: el.style.maxHeight });
-        el.style.overflow = 'visible';
-        el.style.height = 'auto';
-        el.style.maxHeight = 'none';
+      clone.classList.remove('h-full', 'w-full');
+      clone.style.height = 'auto';
+      clone.style.width = 'max-content';
+      clone.style.minWidth = '100%';
+      
+      const style = document.createElement('style');
+      style.innerHTML = `
+        .print-force-expand * {
+          overflow: visible !important;
+          max-width: none !important;
+          max-height: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+        .print-force-expand .bg-white\\/80, 
+        .print-force-expand .bg-white\\/50,
+        .print-force-expand .bg-gray-50\\/80,
+        .print-force-expand .bg-blue-50\\/80,
+        .print-force-expand .bg-yellow-50\\/80,
+        .print-force-expand .bg-indigo-50\\/80,
+        .print-force-expand .bg-emerald-50\\/80,
+        .print-force-expand .bg-purple-50\\/80 {
+          background-color: #ffffff !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] {
+          width: max-content !important;
+          min-width: 100% !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] .grid {
+          width: max-content !important;
+          min-width: 100% !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] .grid > div {
+          white-space: nowrap !important;
+        }
+      `;
+      printContainer.appendChild(style);
+      printContainer.appendChild(clone);
+      document.body.appendChild(printContainer);
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      let maxWidth = 1600;
+      const allElements = printContainer.querySelectorAll('*');
+      allElements.forEach(el => {
+        if (el.scrollWidth > maxWidth) {
+          maxWidth = el.scrollWidth;
+        }
       });
 
-      const targetWidth = Math.max(element.scrollWidth, 1200);
+      maxWidth += 48;
 
-      const originalElementStyles = {
-        height: element.style.height,
-        overflow: element.style.overflow,
-        width: element.style.width,
-        maxWidth: element.style.maxWidth,
-        minWidth: element.style.minWidth,
-        flexShrink: element.style.flexShrink,
-        position: element.style.position,
-        left: element.style.left,
-        top: element.style.top,
-        transform: element.style.transform,
-      };
+      printContainer.style.width = `${maxWidth}px`;
+      clone.style.width = `${maxWidth}px`;
 
-      element.style.height = 'auto';
-      element.style.overflow = 'visible';
-      element.style.width = `${targetWidth}px`;
-      element.style.minWidth = `${targetWidth}px`;
-      element.style.flexShrink = '0';
-      element.style.maxWidth = 'none';
-      element.style.position = 'absolute';
-      element.style.left = '0px';
-      element.style.top = '0px';
-      element.style.transform = 'none';
-
-      const parent = element.parentElement;
-      const originalParentStyles = parent ? {
-        overflow: parent.style.overflow,
-        position: parent.style.position,
-        alignItems: parent.style.alignItems,
-        justifyContent: parent.style.justifyContent,
-        padding: parent.style.padding,
-      } : null;
-
-      if (parent) {
-        parent.style.overflow = 'visible';
-        parent.style.position = 'absolute';
-        parent.style.alignItems = 'flex-start';
-        parent.style.justifyContent = 'flex-start';
-        parent.style.padding = '0px';
-      }
-
-      // Wait for browser to reflow the layout before capturing
-      await new Promise(resolve => setTimeout(resolve, 150));
-
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        logging: false,
-        allowTaint: true,
-        width: targetWidth,
-        height: element.scrollHeight,
-        windowWidth: targetWidth,
-        windowHeight: element.scrollHeight
+      const dataUrl = await toJpeg(printContainer, {
+        quality: 0.95,
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+        width: maxWidth,
+        filter: (node: any) => {
+          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
+            return false;
+          }
+          return true;
+        },
       });
 
-      // Restore styles
-      Object.assign(element.style, originalElementStyles);
-      if (parent && originalParentStyles) {
-        Object.assign(parent.style, originalParentStyles);
-      }
-      originalStyles.forEach(({ el, overflow, height, maxHeight }) => {
-        el.style.overflow = overflow;
-        el.style.height = height;
-        el.style.maxHeight = maxHeight;
-      });
+      document.body.removeChild(printContainer);
 
-      const imgData = canvas.toDataURL("image/jpeg", 1.0);
-      
+      // Create a temporary image to get dimensions
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise(resolve => img.onload = resolve);
+
       // Always use landscape for overall report to fit wide tables
       const pdf = new jsPDF({
         orientation: 'l',
         unit: 'px',
-        format: [canvas.width, canvas.height]
+        format: [img.width, img.height]
       });
 
-      pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
       pdf.save(`dca_report_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) {
       console.error("Failed to export PDF", err);

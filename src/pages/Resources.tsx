@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion } from "motion/react";
-import * as htmlToImage from "html-to-image";
-import jsPDF from "jspdf";
+import { toJpeg } from "html-to-image";
+import { jsPDF } from "jspdf";
 import {
   LineChart,
   Line,
@@ -189,11 +189,71 @@ function InterestCalculator() {
   const handleExportReport = async () => {
     if (!reportRef.current) return;
     try {
-      const dataUrl = await htmlToImage.toPng(reportRef.current, { quality: 0.95, backgroundColor: '#ffffff' });
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (reportRef.current.offsetHeight * pdfWidth) / reportRef.current.offsetWidth;
-      pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      const printContainer = document.createElement('div');
+      printContainer.style.position = 'absolute';
+      printContainer.style.top = '-9999px';
+      printContainer.style.left = '0';
+      printContainer.style.backgroundColor = '#ffffff';
+      printContainer.style.padding = '24px';
+      printContainer.classList.add('print-force-expand');
+      
+      const clone = reportRef.current.cloneNode(true) as HTMLElement;
+      clone.classList.remove('h-full', 'w-full');
+      clone.style.height = 'auto';
+      clone.style.width = '1200px'; // Fixed width for consistent layout
+      
+      const style = document.createElement('style');
+      style.innerHTML = `
+        .print-force-expand * {
+          overflow: visible !important;
+          max-width: none !important;
+          max-height: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+        .print-force-expand .bg-white\\/80, 
+        .print-force-expand .bg-white\\/50,
+        .print-force-expand .bg-gray-50\\/80,
+        .print-force-expand .bg-blue-50\\/80,
+        .print-force-expand .bg-yellow-50\\/80,
+        .print-force-expand .bg-indigo-50\\/80,
+        .print-force-expand .bg-emerald-50\\/80,
+        .print-force-expand .bg-purple-50\\/80 {
+          background-color: #ffffff !important;
+        }
+      `;
+      printContainer.appendChild(style);
+      printContainer.appendChild(clone);
+      document.body.appendChild(printContainer);
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const dataUrl = await toJpeg(printContainer, {
+        quality: 0.95,
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+        filter: (node: any) => {
+          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
+            return false;
+          }
+          return true;
+        },
+      });
+
+      document.body.removeChild(printContainer);
+
+      // Create a temporary image to get dimensions
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise(resolve => img.onload = resolve);
+
+      const pdf = new jsPDF({
+        orientation: img.width > img.height ? 'l' : 'p',
+        unit: 'px',
+        format: [img.width, img.height]
+      });
+
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
       pdf.save('interest-report.pdf');
     } catch (err) {
       console.error("Failed to export PDF", err);
@@ -491,96 +551,91 @@ function DCASimulator() {
   const handleExportPDF = async () => {
     if (!resultsRef.current) return;
     try {
-      // Small delay to ensure rendering is stable
-      await new Promise(resolve => setTimeout(resolve, 100));
+      const printContainer = document.createElement('div');
+      printContainer.style.position = 'absolute';
+      printContainer.style.top = '-9999px';
+      printContainer.style.left = '0';
+      printContainer.style.backgroundColor = '#ffffff';
+      printContainer.style.padding = '24px';
+      printContainer.classList.add('print-force-expand');
       
-      const topSection = document.getElementById('sim-top-section');
-      const wrapper = document.getElementById('sim-results-wrapper');
-      const innerWrapper = wrapper?.querySelector('.overflow-auto') as HTMLElement;
+      const clone = resultsRef.current.cloneNode(true) as HTMLElement;
       
-      let originalOverflow = '';
-      let originalHeight = '';
-      let originalMaxHeight = '';
-      let innerOriginalOverflow = '';
+      clone.classList.remove('h-full', 'w-full');
+      clone.style.height = 'auto';
+      clone.style.width = 'max-content';
+      clone.style.minWidth = '100%';
       
-      if (wrapper) {
-        originalOverflow = wrapper.style.overflow;
-        originalHeight = wrapper.style.height;
-        originalMaxHeight = wrapper.style.maxHeight;
-        
-        wrapper.style.overflow = 'visible';
-        wrapper.style.height = 'auto';
-        wrapper.style.maxHeight = 'none';
-      }
-      
-      if (innerWrapper) {
-        innerOriginalOverflow = innerWrapper.style.overflow;
-        innerWrapper.style.overflow = 'visible';
-      }
+      const style = document.createElement('style');
+      style.innerHTML = `
+        .print-force-expand * {
+          overflow: visible !important;
+          max-width: none !important;
+          max-height: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+        .print-force-expand .bg-white\\/50,
+        .print-force-expand .bg-gray-50\\/50,
+        .print-force-expand .bg-blue-50\\/50 {
+          background-color: #ffffff !important;
+        }
+        .print-force-expand table {
+          width: 100% !important;
+          table-layout: auto !important;
+        }
+        .print-force-expand th, .print-force-expand td {
+          white-space: nowrap !important;
+          padding: 12px 16px !important;
+        }
+      `;
+      printContainer.appendChild(style);
+      printContainer.appendChild(clone);
+      document.body.appendChild(printContainer);
 
-      const commonOptions = {
-        quality: 1.0,
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Calculate the actual width needed
+      let maxWidth = 1600;
+      const allElements = printContainer.querySelectorAll('*');
+      allElements.forEach(el => {
+        if (el.scrollWidth > maxWidth) {
+          maxWidth = el.scrollWidth;
+        }
+      });
+
+      maxWidth += 48; // padding
+      printContainer.style.width = `${maxWidth}px`;
+      clone.style.width = `${maxWidth}px`;
+
+      const dataUrl = await toJpeg(printContainer, {
+        quality: 0.95,
         backgroundColor: '#ffffff',
         pixelRatio: 2,
-        filter: (node: HTMLElement) => {
-          return node.getAttribute ? node.getAttribute('data-html2canvas-ignore') !== 'true' : true;
-        }
-      };
+        width: maxWidth,
+        filter: (node: any) => {
+          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
+            return false;
+          }
+          return true;
+        },
+      });
 
-      const topImgData = topSection ? await htmlToImage.toJpeg(topSection, commonOptions) : null;
-      const tableImgData = wrapper ? await htmlToImage.toJpeg(wrapper, commonOptions) : null;
-      
-      if (wrapper) {
-        wrapper.style.overflow = originalOverflow;
-        wrapper.style.height = originalHeight;
-        wrapper.style.maxHeight = originalMaxHeight;
-      }
-      
-      if (innerWrapper) {
-        innerWrapper.style.overflow = innerOriginalOverflow;
-      }
-      
-      const pdfWidth = 297; // A4 landscape width in mm
-      let pdf: jsPDF | null = null;
+      document.body.removeChild(printContainer);
 
-      if (topImgData) {
-        const topImg = new Image();
-        topImg.src = topImgData;
-        await new Promise(resolve => { topImg.onload = resolve; });
-        const topPdfHeight = (topImg.height * pdfWidth) / topImg.width;
-        
-        pdf = new jsPDF({
-          orientation: 'l',
-          unit: 'mm',
-          format: [pdfWidth, topPdfHeight > 0 ? topPdfHeight : 210]
-        });
-        pdf.addImage(topImgData, 'JPEG', 0, 0, pdfWidth, topPdfHeight);
-      }
+      // Create a temporary image to get dimensions
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise(resolve => img.onload = resolve);
 
-      if (tableImgData) {
-        const tableImg = new Image();
-        tableImg.src = tableImgData;
-        await new Promise(resolve => { tableImg.onload = resolve; });
-        const tablePdfHeight = (tableImg.height * pdfWidth) / tableImg.width;
-        
-        if (pdf) {
-          pdf.addPage([pdfWidth, tablePdfHeight > 0 ? tablePdfHeight : 210], 'l');
-          pdf.setPage(2);
-          pdf.addImage(tableImgData, 'JPEG', 0, 0, pdfWidth, tablePdfHeight);
-        } else {
-          pdf = new jsPDF({
-            orientation: 'l',
-            unit: 'mm',
-            format: [pdfWidth, tablePdfHeight > 0 ? tablePdfHeight : 210]
-          });
-          pdf.addImage(tableImgData, 'JPEG', 0, 0, pdfWidth, tablePdfHeight);
-        }
-      }
-      
-      if (pdf) {
-        pdf.save(`dca_simulation_${ticker}_${new Date().toISOString().split('T')[0]}.pdf`);
-      }
-      
+      const pdf = new jsPDF({
+        orientation: img.width > img.height ? 'l' : 'p',
+        unit: 'px',
+        format: [img.width, img.height]
+      });
+
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
+      pdf.save(`dca_simulation_${simulatedTicker || ticker}_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) {
       console.error("Failed to export PDF", err);
       alert("匯出 PDF 失敗 (Failed to export PDF)");

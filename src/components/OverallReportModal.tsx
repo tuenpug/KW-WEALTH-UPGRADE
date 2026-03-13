@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { X, FileText, Download } from 'lucide-react';
 import { AppState } from '../store';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import html2canvas from 'html2canvas';
+import { toJpeg } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 
 interface OverallReportModalProps {
@@ -30,61 +30,99 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
   const handleExportPDF = async () => {
     if (!reportRef.current) return;
     try {
-      const element = reportRef.current;
-      const targetWidth = Math.max(element.scrollWidth, 1200);
+      const printContainer = document.createElement('div');
+      printContainer.style.position = 'absolute';
+      printContainer.style.top = '-9999px';
+      printContainer.style.left = '0';
+      printContainer.style.backgroundColor = '#ffffff';
+      printContainer.style.padding = '24px';
+      printContainer.classList.add('print-force-expand');
+      
+      const clone = reportRef.current.cloneNode(true) as HTMLElement;
+      
+      clone.classList.remove('overflow-hidden', 'max-w-6xl', 'h-[95vh]', 'w-full');
+      clone.style.height = 'auto';
+      clone.style.width = 'max-content';
+      clone.style.minWidth = '100%';
+      
+      const style = document.createElement('style');
+      style.innerHTML = `
+        .print-force-expand * {
+          overflow: visible !important;
+          max-width: none !important;
+          max-height: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+        .print-force-expand .bg-white\\/80, 
+        .print-force-expand .bg-white\\/50,
+        .print-force-expand .bg-gray-50\\/80,
+        .print-force-expand .bg-blue-50\\/80,
+        .print-force-expand .bg-yellow-50\\/80,
+        .print-force-expand .bg-indigo-50\\/80,
+        .print-force-expand .bg-emerald-50\\/80,
+        .print-force-expand .bg-purple-50\\/80 {
+          background-color: #ffffff !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] {
+          width: max-content !important;
+          min-width: 100% !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] .grid {
+          width: max-content !important;
+          min-width: 100% !important;
+        }
+        .print-force-expand .min-w-\\[1200px\\] .grid > div {
+          white-space: nowrap !important;
+        }
+      `;
+      printContainer.appendChild(style);
+      printContainer.appendChild(clone);
+      document.body.appendChild(printContainer);
 
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        logging: false,
-        width: targetWidth,
-        windowWidth: targetWidth,
-        onclone: (clonedDoc, clonedElement) => {
-          // Force the cloned element to expand fully
-          clonedElement.style.width = `${targetWidth}px`;
-          clonedElement.style.minWidth = `${targetWidth}px`;
-          clonedElement.style.height = 'auto';
-          clonedElement.style.maxHeight = 'none';
-          clonedElement.style.overflow = 'visible';
-          clonedElement.style.position = 'static';
-          clonedElement.style.transform = 'none';
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-          // Expand all scrollable containers inside the clone
-          const scrollContainers = clonedElement.querySelectorAll('.custom-scrollbar, #report-table-body, .overflow-x-auto');
-          scrollContainers.forEach((el) => {
-            const htmlEl = el as HTMLElement;
-            htmlEl.style.overflow = 'visible';
-            htmlEl.style.height = 'auto';
-            htmlEl.style.maxHeight = 'none';
-            htmlEl.style.width = '100%';
-          });
-
-          // Unconstrain all parent elements up to the body
-          let parent = clonedElement.parentElement;
-          while (parent && parent !== clonedDoc.body) {
-            parent.style.overflow = 'visible';
-            parent.style.position = 'static';
-            parent.style.transform = 'none';
-            parent.style.width = 'auto';
-            parent.style.height = 'auto';
-            parent.style.maxHeight = 'none';
-            parent.style.maxWidth = 'none';
-            parent = parent.parentElement;
-          }
+      let maxWidth = 1600;
+      const allElements = printContainer.querySelectorAll('*');
+      allElements.forEach(el => {
+        if (el.scrollWidth > maxWidth) {
+          maxWidth = el.scrollWidth;
         }
       });
 
-      const imgData = canvas.toDataURL("image/jpeg", 1.0);
+      maxWidth += 48;
+
+      printContainer.style.width = `${maxWidth}px`;
+      clone.style.width = `${maxWidth}px`;
+
+      const dataUrl = await toJpeg(printContainer, {
+        quality: 0.95,
+        backgroundColor: '#ffffff',
+        pixelRatio: 2,
+        width: maxWidth,
+        filter: (node: any) => {
+          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
+            return false;
+          }
+          return true;
+        },
+      });
+
+      document.body.removeChild(printContainer);
+
+      // Create a temporary image to get dimensions
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise(resolve => img.onload = resolve);
       
       // Always use landscape for overall report to fit wide tables
       const pdf = new jsPDF({
         orientation: 'l',
         unit: 'px',
-        format: [canvas.width, canvas.height]
+        format: [img.width, img.height]
       });
 
-      pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width, canvas.height);
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
       pdf.save(`overall_dca_report_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) {
       console.error("Failed to export PDF", err);
