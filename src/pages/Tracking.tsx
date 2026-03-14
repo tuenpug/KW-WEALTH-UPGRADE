@@ -34,34 +34,101 @@ export default function Tracking() {
 
   const plan = state.aiPlan;
   
+  const categories = useMemo(() => {
+    if (state.aiPlan && state.aiPlan.allocations.length > 0) {
+      const cats: string[] = [];
+      state.aiPlan.allocations.forEach(a => {
+        if (a.tickers && a.tickers.length > 0 && a.category !== "現金儲備／定期" && a.category !== "流動資金及定期存款") {
+          a.tickers.forEach(ticker => {
+            if (ticker.trim()) {
+              cats.push(`${a.category} - ${ticker.trim()}`);
+            }
+          });
+        } else {
+          cats.push(a.category);
+        }
+      });
+      return cats.length > 0 ? cats : ["一般定投"];
+    }
+    return ["一般定投"];
+  }, [state.aiPlan]);
+
   const currentTotalAsset = useMemo(() => {
+    let totalAssetValue = 0;
+    let missingPrice = false;
+
+    // Calculate cash reserve globally
     let cashReserve = state.initialCashReserve || 0;
     state.dcaRecords.forEach(r => {
-      if (r.remainder) cashReserve += r.remainder;
-    });
-    let tradeShares = 0;
-    state.tradeRecords.forEach(trade => {
-      if (trade.type === 'sell') {
-        cashReserve += trade.totalAmount;
-        tradeShares -= trade.shares;
-      } else {
-        cashReserve -= trade.totalAmount;
-        tradeShares += trade.shares;
+      const isRecordLiquidity = r.category === "現金儲備／定期" || r.category === "流動資金及定期存款" || (!r.category && (categories.includes("現金儲備／定期") || categories.includes("流動資金及定期存款")));
+      if (isRecordLiquidity) {
+        cashReserve += r.amount + (r.dividendPerShare || 0);
+      } else if (r.remainder && r.remainder > 0) {
+        cashReserve += r.remainder;
       }
     });
-    const dcaShares = state.dcaRecords.reduce((acc, r) => acc + r.shares, 0);
-    const totalSharesHeld = dcaShares + tradeShares;
-    
-    const latestDCARecord = state.dcaRecords.length > 0 ? state.dcaRecords[state.dcaRecords.length - 1] : null;
-    const realTimePrice = latestDCARecord?.price || 0;
-    
-    const dcaAssetValue = totalSharesHeld * realTimePrice + cashReserve;
+    state.tradeRecords.forEach(r => {
+      if (r.type === 'sell' || r.type === 'dividend') {
+        cashReserve += r.totalAmount;
+      } else if (r.type === 'buy') {
+        cashReserve -= r.totalAmount;
+      }
+    });
+    totalAssetValue += cashReserve;
+
+    categories.forEach(category => {
+      const isLiquidity = category === "現金儲備／定期" || category === "流動資金及定期存款";
+      if (isLiquidity) return; // Already handled globally
+
+      const baseCategory = category.includes(" - ") ? category.split(" - ")[0] : category;
+      const ticker = category.includes(" - ") ? category.split(" - ")[1] : "";
+      
+      const isUSStock = /^[A-Za-z]/.test(ticker);
+      const exchangeRate = isUSStock ? 7.8 : 1;
+      
+      const categoryDCARecords = state.dcaRecords.filter(r => (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || (!r.category && baseCategory === "一般定投"));
+      const categoryTradeRecords = state.tradeRecords.filter(r => (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || (!r.category && baseCategory === "一般定投"));
+      
+      let cumulativeShares = 0;
+      let cumulativeDividends = 0;
+      
+      categoryDCARecords.forEach(r => {
+        cumulativeShares += r.shares;
+        cumulativeDividends += cumulativeShares * (r.dividendPerShare || 0);
+      });
+      
+      categoryTradeRecords.forEach(r => {
+        if (r.type === 'buy') {
+          cumulativeShares += r.shares;
+        } else if (r.type === 'sell') {
+          cumulativeShares -= r.shares;
+        } else if (r.type === 'dividend') {
+          cumulativeDividends += r.price * r.shares; // In trade records, dividend is stored in price
+        }
+      });
+      
+      if (cumulativeShares > 0) {
+        const lastRecord = categoryDCARecords.length > 0 ? categoryDCARecords[categoryDCARecords.length - 1] : null;
+        const currentPrice = state.realTimePrices[category] || (lastRecord ? lastRecord.price : 0);
+        
+        if (!currentPrice) {
+          missingPrice = true;
+        } else {
+          const catAssetValue = (cumulativeShares * currentPrice + cumulativeDividends) * exchangeRate;
+          totalAssetValue += catAssetValue;
+        }
+      }
+    });
+
+    if (missingPrice) {
+      return "待定 － 請輸入股票現價";
+    }
 
     const sortedActuals = [...state.actuals].sort((a, b) => b.id.localeCompare(a.id));
     const latestActual = sortedActuals.length > 0 ? sortedActuals[0].actualTotal : 0;
 
-    return Math.max(dcaAssetValue, latestActual);
-  }, [state.actuals, state.dcaRecords, state.tradeRecords, state.initialCashReserve]);
+    return Math.max(totalAssetValue, latestActual);
+  }, [state.dcaRecords, state.tradeRecords, state.initialCashReserve, state.actuals, state.realTimePrices, categories]);
 
   const dynamicProjections = useMemo(() => {
     if (!plan) return [];
@@ -430,8 +497,8 @@ export default function Tracking() {
           <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
             <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md border border-white/20 shadow-inner text-right min-w-[180px]">
               <p className="text-emerald-100 text-sm font-bold uppercase tracking-wider mb-1">現時總收益</p>
-              <p className="text-3xl font-extrabold text-white drop-shadow-md">
-                ${currentTotalAsset.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              <p className={`font-extrabold text-white drop-shadow-md ${typeof currentTotalAsset === 'string' ? 'text-xl' : 'text-3xl'}`}>
+                {typeof currentTotalAsset === 'string' ? currentTotalAsset : `$${currentTotalAsset.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
               </p>
             </div>
 

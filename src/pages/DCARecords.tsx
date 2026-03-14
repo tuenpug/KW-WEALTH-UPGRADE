@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from "react";
+import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useAppContext, DCARecord, TradeRecord } from "../store";
 import { motion, AnimatePresence } from "motion/react";
 import { exportToImageOrPDF } from "../utils/exportUtils";
@@ -58,7 +58,7 @@ import {
 import { OverallReportModal } from "../components/OverallReportModal";
 
 export default function DCARecords() {
-  const { state, addOrUpdateDCARecord, deleteDCARecord, addTradeRecord, deleteTradeRecord, importDCADataset, setInitialCashReserve } = useAppContext();
+  const { state, addOrUpdateDCARecord, deleteDCARecord, addTradeRecord, deleteTradeRecord, importDCADataset, setInitialCashReserve, setRealTimePrice: setGlobalRealTimePrice } = useAppContext();
   const [showOverallReport, setShowOverallReport] = useState(false);
   
   // --- Categories from AI Plan ---
@@ -167,6 +167,32 @@ export default function DCARecords() {
   const [selectedMonth, setSelectedMonth] = useState(state.aiPlan ? state.aiPlan.startMonth : new Date().getMonth() + 1);
   const [selectedPeriod, setSelectedPeriod] = useState<string>("每一個月");
 
+  const getRecommendedAmount = useCallback((cat: string, year: number, month: number) => {
+    if (!state.aiPlan) return 0;
+    const baseCategory = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+    const allocation = state.aiPlan.allocations.find(a => a.category === baseCategory);
+    if (!allocation) return 0;
+    
+    const period = allocation.periods.find(p => {
+      const pStart = p.startYear * 12 + p.startMonth;
+      const pEnd = p.endYear * 12 + p.endMonth;
+      const current = year * 12 + month;
+      return current >= pStart && current <= pEnd;
+    });
+    
+    let recommendedAmount = period ? period.amount : 0;
+    
+    if (allocation.tickers && allocation.tickers.length > 0) {
+      const ticker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
+      if (ticker && allocation.tickerPercentages && allocation.tickerPercentages[ticker] !== undefined) {
+        recommendedAmount = Math.round(recommendedAmount * (allocation.tickerPercentages[ticker] / 100));
+      } else {
+        recommendedAmount = Math.round(recommendedAmount / allocation.tickers.length);
+      }
+    }
+    return recommendedAmount;
+  }, [state.aiPlan]);
+
   // Sync selected date to the global frontier (earliest incomplete month)
   useEffect(() => {
     if (!state.aiPlan) return;
@@ -177,7 +203,18 @@ export default function DCARecords() {
     let foundIncomplete = false;
     while (currentYear <= maxYear) {
       const allCategoriesComplete = categories.every(cat => {
-        return state.dcaRecords.some(r => r.year === currentYear && r.month === currentMonth && (r.category === cat || (!r.category && cat === "一般定投")));
+        const recommended = getRecommendedAmount(cat, currentYear, currentMonth);
+        if (recommended <= 0) return true; // Ignore categories that don't require DCA in this month
+        if (noDCAModes[cat]) return true; // Ignore categories marked as no DCA
+        
+        const catBase = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+        const catTicker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
+        
+        return state.dcaRecords.some(r => 
+          r.year === currentYear && 
+          r.month === currentMonth && 
+          (r.category === catBase && (catTicker ? r.ticker === catTicker : true) || (!r.category && catBase === "一般定投"))
+        );
       });
       if (!allCategoriesComplete) {
         foundIncomplete = true;
@@ -193,7 +230,7 @@ export default function DCARecords() {
       setSelectedYear(currentYear);
       setSelectedMonth(currentMonth);
     }
-  }, [categories, state.aiPlan, state.dcaRecords.length]); // Run when records change to advance globally
+  }, [categories, state.aiPlan, state.dcaRecords.length, getRecommendedAmount]); // Run when records change to advance globally
 
   // Auto-fill recommended amount when category or date changes
   useEffect(() => {
@@ -239,29 +276,25 @@ export default function DCARecords() {
   }, [selectedCategory, selectedYear, selectedMonth, state.aiPlan]);
 
   // --- State for Asset Overview ---
-  const [realTimePrices, setRealTimePrices] = useState<Record<string, number>>({});
+  const realTimePrices = state.realTimePrices || {};
   
   useEffect(() => {
-    setRealTimePrices(prev => {
-      let updated = false;
-      const newPrices = { ...prev };
-      categories.forEach(cat => {
-        if (newPrices[cat] === undefined) {
-          const catBase = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
-          const catTicker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
-          const records = state.dcaRecords.filter(r => (r.category === catBase && (catTicker ? r.ticker === catTicker : true)) || (!r.category && catBase === "一般定投"));
-          if (records.length > 0) {
-            newPrices[cat] = records[records.length - 1].price;
-            updated = true;
-          }
+    let updated = false;
+    categories.forEach(cat => {
+      if (realTimePrices[cat] === undefined) {
+        const catBase = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+        const catTicker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
+        const records = state.dcaRecords.filter(r => (r.category === catBase && (catTicker ? r.ticker === catTicker : true)) || (!r.category && catBase === "一般定投"));
+        if (records.length > 0) {
+          setGlobalRealTimePrice(cat, records[records.length - 1].price);
+          updated = true;
         }
-      });
-      return updated ? newPrices : prev;
+      }
     });
-  }, [categories, state.dcaRecords]);
+  }, [categories, state.dcaRecords, realTimePrices, setGlobalRealTimePrice]);
 
   const realTimePrice = realTimePrices[selectedCategory] || 0;
-  const setRealTimePrice = (val: number) => setRealTimePrices(prev => ({ ...prev, [selectedCategory]: val }));
+  const setRealTimePrice = (val: number) => setGlobalRealTimePrice(selectedCategory, val);
 
   // --- State for Trading Interface ---
   const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
@@ -1101,7 +1134,8 @@ export default function DCARecords() {
         {categories.map(cat => {
           const catBase = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
           const catTicker = cat.includes(" - ") ? cat.split(" - ")[1] : "";
-          const hasRecord = noDCAModes[cat] || state.dcaRecords.some(r => r.year === selectedYear && r.month === selectedMonth && (r.category === catBase && (catTicker ? r.ticker === catTicker : true) || (!r.category && catBase === "一般定投")));
+          const recommended = getRecommendedAmount(cat, selectedYear, selectedMonth);
+          const hasRecord = noDCAModes[cat] || recommended <= 0 || state.dcaRecords.some(r => r.year === selectedYear && r.month === selectedMonth && (r.category === catBase && (catTicker ? r.ticker === catTicker : true) || (!r.category && catBase === "一般定投")));
           
           let tabClass = "";
           if (selectedCategory === cat) {

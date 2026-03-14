@@ -150,6 +150,7 @@ export type AppState = {
   dcaRecords: DCARecord[];
   tradeRecords: TradeRecord[];
   initialCashReserve: number;
+  realTimePrices: Record<string, number>;
 };
 
 type AppContextType = {
@@ -171,6 +172,7 @@ type AppContextType = {
   deleteTradeRecord: (id: string) => void;
   importDCADataset: (dca: DCARecord[], trades: TradeRecord[], initialCash?: number) => void;
   setInitialCashReserve: (amount: number) => void;
+  setRealTimePrice: (category: string, price: number) => void;
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -211,12 +213,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           dcaRecords: parsed.dcaRecords || [],
           tradeRecords: parsed.tradeRecords || [],
           initialCashReserve: parsed.initialCashReserve || 0,
+          realTimePrices: parsed.realTimePrices || {},
         };
       } catch (e) {
         console.error("Failed to parse saved state", e);
       }
     }
-    return { records: [defaultRecord], aiPlan: null, actuals: [], dcaRecords: [], tradeRecords: [], initialCashReserve: 0 };
+    return { records: [defaultRecord], aiPlan: null, actuals: [], dcaRecords: [], tradeRecords: [], initialCashReserve: 0, realTimePrices: {} };
   });
 
   useEffect(() => {
@@ -333,6 +336,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     setState((prev) => ({ ...prev, initialCashReserve: amount }));
   };
 
+  const setRealTimePrice = (category: string, price: number) => {
+    setState((prev) => ({
+      ...prev,
+      realTimePrices: {
+        ...prev.realTimePrices,
+        [category]: price,
+      },
+    }));
+  };
+
   const clearAllData = () => {
     localStorage.removeItem("wealthApp");
     window.location.reload();
@@ -356,6 +369,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         deleteTradeRecord,
         importDCADataset,
         setInitialCashReserve,
+        setRealTimePrice,
       }}
     >
       {children}
