@@ -359,8 +359,12 @@ export default function DCARecords() {
   }, [state.dcaRecords, baseSelectedCategory, selectedTicker]);
 
   const categoryTradeRecords = useMemo(() => {
-    return state.tradeRecords.filter(r => (r.category === baseSelectedCategory && (selectedTicker ? r.ticker === selectedTicker : true)) || (!r.category && baseSelectedCategory === "一般定投"));
-  }, [state.tradeRecords, baseSelectedCategory, selectedTicker]);
+    return state.tradeRecords.filter(r => 
+      (r.category === baseSelectedCategory && (selectedTicker ? r.ticker === selectedTicker : true)) || 
+      (r.category === selectedCategory) || 
+      (!r.category && baseSelectedCategory === "一般定投")
+    );
+  }, [state.tradeRecords, baseSelectedCategory, selectedTicker, selectedCategory]);
 
   const tradeStats = useMemo(() => {
     let cashReserve = state.initialCashReserve;
@@ -384,14 +388,37 @@ export default function DCARecords() {
 
     // Calculate total dividends from DCA records across all categories
     // To do this accurately, we need to interleave DCA and Trade records for each category
-    const categories = Array.from(new Set([...state.dcaRecords.map(r => r.category || "一般定投"), ...state.tradeRecords.map(r => r.category || "一般定投")]));
+    const categoryKeys = new Set<string>();
+    state.dcaRecords.forEach(r => {
+      const cat = r.category || "一般定投";
+      const key = r.ticker ? `${cat} - ${r.ticker}` : cat;
+      categoryKeys.add(key);
+    });
+    state.tradeRecords.forEach(r => {
+      const cat = r.category || "一般定投";
+      const baseCat = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+      const ticker = r.ticker || (cat.includes(" - ") ? cat.split(" - ")[1] : "");
+      const key = ticker ? `${baseCat} - ${ticker}` : baseCat;
+      categoryKeys.add(key);
+    });
     
-    categories.forEach(cat => {
-      const isCatLiquidity = cat === "現金儲備／定期" || cat === "流動資金及定期存款";
+    Array.from(categoryKeys).forEach(key => {
+      const baseCat = key.includes(" - ") ? key.split(" - ")[0] : key;
+      const isCatLiquidity = baseCat === "現金儲備／定期" || baseCat === "流動資金及定期存款";
       if (isCatLiquidity) return;
 
-      const catDCA = state.dcaRecords.filter(r => (r.category || "一般定投") === cat);
-      const catTrades = state.tradeRecords.filter(r => (r.category || "一般定投") === cat);
+      const catDCA = state.dcaRecords.filter(r => {
+        const cat = r.category || "一般定投";
+        const rKey = r.ticker ? `${cat} - ${r.ticker}` : cat;
+        return rKey === key;
+      });
+      const catTrades = state.tradeRecords.filter(r => {
+        const cat = r.category || "一般定投";
+        const rBaseCat = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+        const rTicker = r.ticker || (cat.includes(" - ") ? cat.split(" - ")[1] : "");
+        const rKey = rTicker ? `${rBaseCat} - ${rTicker}` : rBaseCat;
+        return rKey === key;
+      });
       
       const timeline: any[] = [];
       catDCA.forEach(r => {
@@ -420,19 +447,17 @@ export default function DCARecords() {
     });
 
     let tradeShares = 0;
+    categoryTradeRecords.forEach(trade => {
+      if (trade.type === 'buy') tradeShares += trade.shares;
+      if (trade.type === 'sell') tradeShares -= trade.shares;
+    });
 
-    // Cash is global, but shares are per category
+    // Cash is global
     state.tradeRecords.forEach(trade => {
       if (trade.type === 'sell') {
         cashReserve += trade.totalAmount;
-        if (trade.category === selectedCategory || (!trade.category && selectedCategory === "一般定投")) {
-          tradeShares -= trade.shares;
-        }
       } else if (trade.type === 'buy') {
         cashReserve -= trade.totalAmount;
-        if (trade.category === selectedCategory || (!trade.category && selectedCategory === "一般定投")) {
-          tradeShares += trade.shares;
-        }
       } else if (trade.type === 'withdraw') {
         const isTradeLiquidity = trade.category === "現金儲備／定期" || trade.category === "流動資金及定期存款";
         if (isTradeLiquidity) {
@@ -446,7 +471,7 @@ export default function DCARecords() {
     });
 
     return { cashReserve, tradeShares, liquidityValue, liquidityInvested };
-  }, [state.tradeRecords, state.initialCashReserve, state.dcaRecords, selectedCategory]);
+  }, [state.tradeRecords, state.initialCashReserve, state.dcaRecords, selectedCategory, categoryTradeRecords]);
 
   const dcaStats = useMemo(() => {
     if (isLiquidity) {
@@ -476,7 +501,7 @@ export default function DCARecords() {
     const avgPriceInHKD = totalShares > 0 ? totalInvested / totalShares : 0;
     const avgPrice = avgPriceInHKD / (currentTabInput.exchangeRate || (ticker && /^[A-Za-z]/.test(ticker) ? 7.8 : 1));
     return { totalInvested, totalShares, avgPrice };
-  }, [categoryDCARecords, categoryTradeRecords, isLiquidity, tradeStats.liquidityInvested, tradeStats.liquidityValue, exchangeRate, ticker]);
+  }, [categoryDCARecords, categoryTradeRecords, isLiquidity, tradeStats.liquidityInvested, tradeStats.liquidityValue, exchangeRate, ticker, currentTabInput.exchangeRate]);
 
   const totalSharesHeld = isLiquidity ? tradeStats.liquidityValue : dcaStats.totalShares;
   const totalAssetValue = totalSharesHeld * realTimePrice * exchangeRate;
@@ -838,10 +863,13 @@ export default function DCARecords() {
           cumulativeShares += item.shares;
           currentDividend = cumulativeShares * (item.dividendPerShare || 0);
         } else if (item.type === 'Sell') {
-          cumulativePrincipal -= item.amount;
+          if (cumulativeShares > 0) {
+            const avgCost = cumulativePrincipal / cumulativeShares;
+            cumulativePrincipal -= avgCost * item.shares;
+          }
           cumulativeShares -= item.shares;
         } else if (item.type === 'Dividend') {
-          currentDividend = item.dividendPerShare * item.shares;
+          currentDividend = item.amount;
         }
 
         cumulativeDividends += currentDividend;
@@ -988,10 +1016,13 @@ export default function DCARecords() {
 
     const formattedDate = `${tradeYear}-${String(tradeMonth).padStart(2, '0')}-01`;
 
+    const baseCategory = selectedCategory.includes(" - ") ? selectedCategory.split(" - ")[0] : selectedCategory;
+    const extractedTicker = selectedCategory.includes(" - ") ? selectedCategory.split(" - ")[1] : "";
+
     addTradeRecord({
       id: Date.now().toString(),
-      ticker: ticker || selectedCategory,
-      category: selectedCategory,
+      ticker: extractedTicker || ticker || "",
+      category: baseCategory,
       type: tradeType as 'buy' | 'sell' | 'withdraw' | 'dividend',
       date: formattedDate,
       price: tradePrice,

@@ -55,7 +55,11 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
     const exchangeRate = isUSStock ? 7.8 : 1;
     
     const categoryDCARecords = state.dcaRecords.filter(r => (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || (!r.category && baseCategory === "一般定投"));
-    const categoryTradeRecords = state.tradeRecords.filter(r => (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || (!r.category && baseCategory === "一般定投"));
+    const categoryTradeRecords = state.tradeRecords.filter(r => 
+      (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || 
+      (r.category === category) || 
+      (!r.category && baseCategory === "一般定投")
+    );
     
     const timeline: any[] = [];
 
@@ -182,10 +186,13 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
           cumulativeShares += item.shares;
           currentDividend = cumulativeShares * (item.dividendPerShare || 0);
         } else if (item.type === 'Sell') {
-          cumulativePrincipal -= item.amount;
+          if (cumulativeShares > 0) {
+            const avgCost = cumulativePrincipal / cumulativeShares;
+            cumulativePrincipal -= avgCost * item.shares;
+          }
           cumulativeShares -= item.shares;
         } else if (item.type === 'Dividend') {
-          currentDividend = item.dividendPerShare * item.shares;
+          currentDividend = item.amount;
         }
 
         cumulativeDividends += currentDividend;

@@ -74,51 +74,95 @@ export default function Tracking() {
         cashReserve -= r.totalAmount;
       }
     });
-    totalAssetValue += cashReserve;
+    // Calculate total dividends from DCA records across all categories
+    const categoryKeys = new Set<string>();
+    state.dcaRecords.forEach(r => {
+      const cat = r.category || "一般定投";
+      const key = r.ticker ? `${cat} - ${r.ticker}` : cat;
+      categoryKeys.add(key);
+    });
+    state.tradeRecords.forEach(r => {
+      const cat = r.category || "一般定投";
+      const baseCat = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+      const ticker = r.ticker || (cat.includes(" - ") ? cat.split(" - ")[1] : "");
+      const key = ticker ? `${baseCat} - ${ticker}` : baseCat;
+      categoryKeys.add(key);
+    });
 
-    categories.forEach(category => {
-      const isLiquidity = category === "現金儲備／定期" || category === "流動資金及定期存款";
-      if (isLiquidity) return; // Already handled globally
+    Array.from(categoryKeys).forEach(key => {
+      const baseCat = key.includes(" - ") ? key.split(" - ")[0] : key;
+      const ticker = key.includes(" - ") ? key.split(" - ")[1] : "";
+      
+      const isCatLiquidity = baseCat === "現金儲備／定期" || baseCat === "流動資金及定期存款";
+      if (isCatLiquidity) return;
 
-      const baseCategory = category.includes(" - ") ? category.split(" - ")[0] : category;
-      const ticker = category.includes(" - ") ? category.split(" - ")[1] : "";
-      
-      const isUSStock = /^[A-Za-z]/.test(ticker);
-      const exchangeRate = isUSStock ? 7.8 : 1;
-      
-      const categoryDCARecords = state.dcaRecords.filter(r => (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || (!r.category && baseCategory === "一般定投"));
-      const categoryTradeRecords = state.tradeRecords.filter(r => (r.category === baseCategory && (ticker ? r.ticker === ticker : true)) || (!r.category && baseCategory === "一般定投"));
-      
-      let cumulativeShares = 0;
-      let cumulativeDividends = 0;
-      
-      categoryDCARecords.forEach(r => {
-        cumulativeShares += r.shares;
-        cumulativeDividends += cumulativeShares * (r.dividendPerShare || 0);
+      const catDCA = state.dcaRecords.filter(r => {
+        const cat = r.category || "一般定投";
+        const rKey = r.ticker ? `${cat} - ${r.ticker}` : cat;
+        return rKey === key;
+      });
+      const catTrades = state.tradeRecords.filter(r => {
+        const cat = r.category || "一般定投";
+        const rBaseCat = cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+        const rTicker = r.ticker || (cat.includes(" - ") ? cat.split(" - ")[1] : "");
+        const rKey = rTicker ? `${rBaseCat} - ${rTicker}` : rBaseCat;
+        return rKey === key;
       });
       
-      categoryTradeRecords.forEach(r => {
-        if (r.type === 'buy') {
-          cumulativeShares += r.shares;
-        } else if (r.type === 'sell') {
-          cumulativeShares -= r.shares;
-        } else if (r.type === 'dividend') {
-          cumulativeDividends += r.price * r.shares; // In trade records, dividend is stored in price
+      const timeline: any[] = [];
+      catDCA.forEach(r => {
+        const date = new Date(r.year, r.month - 1, r.period === "15號" ? 15 : 1);
+        timeline.push({ date, type: 'DCA', shares: r.shares, dividendPerShare: r.dividendPerShare || 0, ticker: r.ticker });
+      });
+      catTrades.forEach(r => {
+        timeline.push({ date: new Date(r.date), type: r.type, shares: r.shares, dividendPerShare: 0, ticker: r.ticker });
+      });
+      
+      timeline.sort((a, b) => a.date.getTime() - b.date.getTime());
+      
+      let cumulativeShares = 0;
+      timeline.forEach(item => {
+        if (item.type === 'DCA' || item.type === 'buy') {
+          cumulativeShares += item.shares;
+          if (item.type === 'DCA' && item.dividendPerShare > 0) {
+            const isUS = item.ticker && /^[A-Za-z]/.test(item.ticker);
+            const rate = isUS ? 7.8 : 1;
+            cashReserve += (cumulativeShares * item.dividendPerShare) * rate;
+          }
+        } else if (item.type === 'sell') {
+          cumulativeShares -= item.shares;
         }
       });
       
       if (cumulativeShares > 0) {
-        const lastRecord = categoryDCARecords.length > 0 ? categoryDCARecords[categoryDCARecords.length - 1] : null;
-        const currentPrice = state.realTimePrices[category] || (lastRecord ? lastRecord.price : 0);
+        const lastRecord = catDCA.length > 0 ? catDCA[catDCA.length - 1] : null;
+        const lastTrade = catTrades.length > 0 ? catTrades[catTrades.length - 1] : null;
+        
+        let fallbackPrice = 0;
+        if (lastRecord && lastTrade) {
+          const lastRecordDate = new Date(lastRecord.year, lastRecord.month - 1, lastRecord.period === "15號" ? 15 : 1);
+          const lastTradeDate = new Date(lastTrade.date);
+          fallbackPrice = lastRecordDate > lastTradeDate ? lastRecord.price : lastTrade.price;
+        } else if (lastRecord) {
+          fallbackPrice = lastRecord.price;
+        } else if (lastTrade) {
+          fallbackPrice = lastTrade.price;
+        }
+        
+        const currentPrice = state.realTimePrices[key] || fallbackPrice;
         
         if (!currentPrice) {
           missingPrice = true;
         } else {
-          const catAssetValue = (cumulativeShares * currentPrice + cumulativeDividends) * exchangeRate;
+          const isUSStock = /^[A-Za-z]/.test(ticker);
+          const exchangeRate = isUSStock ? 7.8 : 1;
+          const catAssetValue = cumulativeShares * currentPrice * exchangeRate;
           totalAssetValue += catAssetValue;
         }
       }
     });
+
+    totalAssetValue += cashReserve;
 
     if (missingPrice) {
       return "待定 － 請輸入股票現價";
@@ -265,7 +309,10 @@ export default function Tracking() {
     // Calculate shares and value per category
     const categories = Array.from(new Set([
       ...relevantDCARecords.map(r => r.category || '未分類'),
-      ...relevantTradeRecords.map(r => r.category || '未分類'),
+      ...relevantTradeRecords.map(r => {
+        const cat = r.category || '未分類';
+        return cat.includes(" - ") ? cat.split(" - ")[0] : cat;
+      }),
       ...(plan?.allocations.map(a => a.category) || [])
     ]));
 
@@ -303,11 +350,18 @@ export default function Tracking() {
       }
 
       const catDCAs = relevantDCARecords.filter(r => (r.category || '未分類') === cat);
-      const catTrades = relevantTradeRecords.filter(r => (r.category || '未分類') === cat);
+      const catTrades = relevantTradeRecords.filter(r => {
+        const rCat = r.category || '未分類';
+        const rBaseCat = rCat.includes(" - ") ? rCat.split(" - ")[0] : rCat;
+        return rBaseCat === cat;
+      });
       
       const tickers = Array.from(new Set([
         ...catDCAs.map(r => r.ticker || ''),
-        ...catTrades.map(r => r.ticker || '')
+        ...catTrades.map(r => {
+          const rCat = r.category || '未分類';
+          return r.ticker || (rCat.includes(" - ") ? rCat.split(" - ")[1] : '');
+        })
       ]));
 
       let categoryTotalValue = 0;
@@ -317,7 +371,11 @@ export default function Tracking() {
 
       tickers.forEach(ticker => {
         const tickerDCAs = catDCAs.filter(r => (r.ticker || '') === ticker);
-        const tickerTrades = catTrades.filter(r => (r.ticker || '') === ticker);
+        const tickerTrades = catTrades.filter(r => {
+          const rCat = r.category || '未分類';
+          const rTicker = r.ticker || (rCat.includes(" - ") ? rCat.split(" - ")[1] : '');
+          return rTicker === ticker;
+        });
 
         const dcaShares = tickerDCAs.reduce((acc, r) => acc + r.shares, 0);
         const dcaInvested = tickerDCAs.reduce((acc, r) => acc + r.amount, 0);
