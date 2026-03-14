@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { useAppContext, AIPlan, calculateProjections } from "../store";
 import { GoogleGenAI, Type } from "@google/genai";
 import { motion, AnimatePresence } from "motion/react";
-import { toJpeg } from "html-to-image";
+import * as htmlToImage from "html-to-image";
 import { jsPDF } from "jspdf";
 import {
   Sparkles,
@@ -209,65 +209,28 @@ export default function WealthPlan() {
   const handleExportPDF = async () => {
     if (!planRef.current) return;
     try {
-      const printContainer = document.createElement('div');
-      printContainer.style.position = 'absolute';
-      printContainer.style.top = '-9999px';
-      printContainer.style.left = '0';
-      printContainer.style.backgroundColor = '#ffffff';
-      printContainer.style.padding = '24px';
-      printContainer.classList.add('print-force-expand');
-      
-      const clone = planRef.current.cloneNode(true) as HTMLElement;
-      clone.classList.remove('h-full', 'w-full');
-      clone.style.height = 'auto';
-      clone.style.width = '1200px'; // Fixed width for consistent layout
-      
-      const style = document.createElement('style');
-      style.innerHTML = `
-        .print-force-expand * {
-          overflow: visible !important;
-          max-width: none !important;
-          max-height: none !important;
-          backdrop-filter: none !important;
-          -webkit-backdrop-filter: none !important;
-        }
-        .print-force-expand .bg-white\\/80, 
-        .print-force-expand .bg-white\\/50,
-        .print-force-expand .bg-gray-50\\/80,
-        .print-force-expand .bg-blue-50\\/80,
-        .print-force-expand .bg-yellow-50\\/80,
-        .print-force-expand .bg-indigo-50\\/80,
-        .print-force-expand .bg-emerald-50\\/80,
-        .print-force-expand .bg-purple-50\\/80 {
-          background-color: #ffffff !important;
-        }
-      `;
-      printContainer.appendChild(style);
-      printContainer.appendChild(clone);
-      document.body.appendChild(printContainer);
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      const dataUrl = await toJpeg(printContainer, {
-        quality: 0.95,
+      const element = planRef.current;
+      const imgData = await htmlToImage.toJpeg(element, {
+        quality: 1.0,
         backgroundColor: '#ffffff',
-        pixelRatio: 2,
+        pixelRatio: 1,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left'
+        }
       });
-
-      document.body.removeChild(printContainer);
-
-      // Create a temporary image to get dimensions
+      
       const img = new Image();
-      img.src = dataUrl;
-      await new Promise(resolve => img.onload = resolve);
-
+      img.src = imgData;
+      await new Promise(resolve => { img.onload = resolve; });
+      
       const pdf = new jsPDF({
         orientation: img.width > img.height ? 'l' : 'p',
         unit: 'px',
         format: [img.width, img.height]
       });
 
-      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
+      pdf.addImage(imgData, 'JPEG', 0, 0, img.width, img.height);
       pdf.save(`wealth_plan_${new Date().toISOString().split('T')[0]}.pdf`);
     } catch (err) {
       console.error("Failed to export PDF", err);

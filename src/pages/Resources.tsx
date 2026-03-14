@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion } from "motion/react";
-import { toJpeg } from "html-to-image";
-import { jsPDF } from "jspdf";
+import { exportToImageOrPDF } from "../utils/exportUtils";
+import jsPDF from "jspdf";
 import {
   LineChart,
   Line,
@@ -189,74 +189,13 @@ function InterestCalculator() {
   const handleExportReport = async () => {
     if (!reportRef.current) return;
     try {
-      const printContainer = document.createElement('div');
-      printContainer.style.position = 'absolute';
-      printContainer.style.top = '-9999px';
-      printContainer.style.left = '0';
-      printContainer.style.backgroundColor = '#ffffff';
-      printContainer.style.padding = '24px';
-      printContainer.classList.add('print-force-expand');
-      
-      const clone = reportRef.current.cloneNode(true) as HTMLElement;
-      clone.classList.remove('h-full', 'w-full');
-      clone.style.height = 'auto';
-      clone.style.width = '1200px'; // Fixed width for consistent layout
-      
-      const style = document.createElement('style');
-      style.innerHTML = `
-        .print-force-expand * {
-          overflow: visible !important;
-          max-width: none !important;
-          max-height: none !important;
-          backdrop-filter: none !important;
-          -webkit-backdrop-filter: none !important;
-        }
-        .print-force-expand .bg-white\\/80, 
-        .print-force-expand .bg-white\\/50,
-        .print-force-expand .bg-gray-50\\/80,
-        .print-force-expand .bg-blue-50\\/80,
-        .print-force-expand .bg-yellow-50\\/80,
-        .print-force-expand .bg-indigo-50\\/80,
-        .print-force-expand .bg-emerald-50\\/80,
-        .print-force-expand .bg-purple-50\\/80 {
-          background-color: #ffffff !important;
-        }
-      `;
-      printContainer.appendChild(style);
-      printContainer.appendChild(clone);
-      document.body.appendChild(printContainer);
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      const dataUrl = await toJpeg(printContainer, {
-        quality: 0.95,
-        backgroundColor: '#ffffff',
-        pixelRatio: 2,
-        filter: (node: any) => {
-          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
-            return false;
-          }
-          return true;
-        },
-      });
-
-      document.body.removeChild(printContainer);
-
-      // Create a temporary image to get dimensions
-      const img = new Image();
-      img.src = dataUrl;
-      await new Promise(resolve => img.onload = resolve);
-
-      const pdf = new jsPDF({
-        orientation: img.width > img.height ? 'l' : 'p',
-        unit: 'px',
-        format: [img.width, img.height]
-      });
-
-      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
-      pdf.save('interest-report.pdf');
+      await exportToImageOrPDF(
+        reportRef.current,
+        'pdf',
+        `interest-report_${new Date().toISOString().split('T')[0]}.pdf`,
+        { pdfOrientation: 'l' }
+      );
     } catch (err) {
-      console.error("Failed to export PDF", err);
       alert("匯出 PDF 失敗 (Failed to export PDF)");
     }
   };
@@ -456,6 +395,7 @@ function InterestCalculator() {
                      strokeWidth={3} 
                      dot={{ r: 4, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} 
                      activeDot={{ r: 6 }} 
+                     isAnimationActive={false}
                    />
                    <Line 
                      type="monotone" 
@@ -464,6 +404,7 @@ function InterestCalculator() {
                      stroke="#94a3b8" 
                      strokeWidth={3} 
                      dot={false}
+                     isAnimationActive={false}
                    />
                  </LineChart>
                </ResponsiveContainer>
@@ -551,93 +492,13 @@ function DCASimulator() {
   const handleExportPDF = async () => {
     if (!resultsRef.current) return;
     try {
-      const printContainer = document.createElement('div');
-      printContainer.style.position = 'absolute';
-      printContainer.style.top = '-9999px';
-      printContainer.style.left = '0';
-      printContainer.style.backgroundColor = '#ffffff';
-      printContainer.style.padding = '24px';
-      printContainer.classList.add('print-force-expand');
-      
-      const clone = resultsRef.current.cloneNode(true) as HTMLElement;
-      
-      clone.classList.remove('h-full', 'w-full');
-      clone.style.height = 'auto';
-      clone.style.width = 'max-content';
-      clone.style.minWidth = '100%';
-      
-      const style = document.createElement('style');
-      style.innerHTML = `
-        .print-force-expand * {
-          overflow: visible !important;
-          max-width: none !important;
-          max-height: none !important;
-          backdrop-filter: none !important;
-          -webkit-backdrop-filter: none !important;
-        }
-        .print-force-expand .bg-white\\/50,
-        .print-force-expand .bg-gray-50\\/50,
-        .print-force-expand .bg-blue-50\\/50 {
-          background-color: #ffffff !important;
-        }
-        .print-force-expand table {
-          width: 100% !important;
-          table-layout: auto !important;
-        }
-        .print-force-expand th, .print-force-expand td {
-          white-space: nowrap !important;
-          padding: 12px 16px !important;
-        }
-      `;
-      printContainer.appendChild(style);
-      printContainer.appendChild(clone);
-      document.body.appendChild(printContainer);
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Calculate the actual width needed
-      let maxWidth = 1600;
-      const allElements = printContainer.querySelectorAll('*');
-      allElements.forEach(el => {
-        if (el.scrollWidth > maxWidth) {
-          maxWidth = el.scrollWidth;
-        }
-      });
-
-      maxWidth += 48; // padding
-      printContainer.style.width = `${maxWidth}px`;
-      clone.style.width = `${maxWidth}px`;
-
-      const dataUrl = await toJpeg(printContainer, {
-        quality: 0.95,
-        backgroundColor: '#ffffff',
-        pixelRatio: 2,
-        width: maxWidth,
-        filter: (node: any) => {
-          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
-            return false;
-          }
-          return true;
-        },
-      });
-
-      document.body.removeChild(printContainer);
-
-      // Create a temporary image to get dimensions
-      const img = new Image();
-      img.src = dataUrl;
-      await new Promise(resolve => img.onload = resolve);
-
-      const pdf = new jsPDF({
-        orientation: img.width > img.height ? 'l' : 'p',
-        unit: 'px',
-        format: [img.width, img.height]
-      });
-
-      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
-      pdf.save(`dca_simulation_${simulatedTicker || ticker}_${new Date().toISOString().split('T')[0]}.pdf`);
+      await exportToImageOrPDF(
+        resultsRef.current,
+        'pdf',
+        `dca_simulation_${ticker}_${new Date().toISOString().split('T')[0]}.pdf`,
+        { pdfOrientation: 'l' }
+      );
     } catch (err) {
-      console.error("Failed to export PDF", err);
       alert("匯出 PDF 失敗 (Failed to export PDF)");
     }
   };
@@ -1141,7 +1002,7 @@ function DCASimulator() {
                 <button
                   onClick={handleExportPDF}
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 text-sm"
-                  data-html2canvas-ignore="true"
+                  data-export-ignore="true"
                 >
                   <ImageIcon className="w-4 h-4" /> 匯出結果 (PDF)
                 </button>
@@ -1213,6 +1074,7 @@ function DCASimulator() {
                       tickLine={false} 
                       tickFormatter={(value) => `$${value}`}
                       domain={['auto', 'auto']}
+                      width={80}
                     />
                     <Tooltip 
                       contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
@@ -1229,6 +1091,7 @@ function DCASimulator() {
                       dot={(props) => <CustomDot {...props} dataLength={results.length} />}
                       activeDot={{ r: 6, strokeWidth: 0 }}
                       name={isUSStock ? "股價 (Price USD)" : "股價 (Price)"}
+                      isAnimationActive={false}
                     />
                     <Line 
                       type="monotone" 
@@ -1238,6 +1101,7 @@ function DCASimulator() {
                       strokeDasharray="5 5"
                       dot={false}
                       name={isUSStock ? "平均成本 (Avg Cost USD)" : "平均成本 (Avg Cost)"}
+                      isAnimationActive={false}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -1266,6 +1130,7 @@ function DCASimulator() {
                       tickLine={false} 
                       tickFormatter={(value) => `$${value}`}
                       domain={['auto', 'auto']}
+                      width={80}
                     />
                     <Tooltip 
                       contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
@@ -1281,6 +1146,7 @@ function DCASimulator() {
                       strokeWidth={2} 
                       dot={false}
                       name={isUSStock ? "股票價值 (Stock Value USD)" : "股票價值 (Stock Value)"}
+                      isAnimationActive={false}
                     />
                     <Line 
                       type="monotone" 
@@ -1289,6 +1155,7 @@ function DCASimulator() {
                       strokeWidth={2} 
                       dot={false}
                       name={isUSStock ? "總資產價值 (Total Asset Value USD)" : "總資產價值 (Total Asset Value)"}
+                      isAnimationActive={false}
                     />
                   </LineChart>
                 </ResponsiveContainer>

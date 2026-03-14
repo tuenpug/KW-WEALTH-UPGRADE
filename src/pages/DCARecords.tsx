@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useAppContext, DCARecord, TradeRecord } from "../store";
 import { motion, AnimatePresence } from "motion/react";
-import { toJpeg } from "html-to-image";
+import { exportToImageOrPDF } from "../utils/exportUtils";
 import CandlestickChart from "../components/CandlestickChart";
 import { jsPDF } from "jspdf";
 import {
@@ -1016,82 +1016,12 @@ export default function DCARecords() {
   const handleExportJPEG = async () => {
     if (!reportRef.current) return;
     try {
-      const printContainer = document.createElement('div');
-      printContainer.style.position = 'absolute';
-      printContainer.style.top = '-9999px';
-      printContainer.style.left = '0';
-      printContainer.style.backgroundColor = '#ffffff';
-      printContainer.style.padding = '24px';
-      printContainer.classList.add('print-force-expand');
-      
-      const clone = reportRef.current.cloneNode(true) as HTMLElement;
-      
-      clone.classList.remove('h-full', 'w-full');
-      clone.style.height = 'auto';
-      clone.style.width = 'max-content';
-      clone.style.minWidth = '100%';
-      
-      const style = document.createElement('style');
-      style.innerHTML = `
-        .print-force-expand * {
-          overflow: visible !important;
-          max-width: none !important;
-          max-height: none !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] {
-          width: max-content !important;
-          min-width: 100% !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] .grid {
-          width: max-content !important;
-          min-width: 100% !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] .grid > div {
-          white-space: nowrap !important;
-        }
-      `;
-      printContainer.appendChild(style);
-      printContainer.appendChild(clone);
-      document.body.appendChild(printContainer);
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      let maxWidth = 1600;
-      const allElements = printContainer.querySelectorAll('*');
-      allElements.forEach(el => {
-        if (el.scrollWidth > maxWidth) {
-          maxWidth = el.scrollWidth;
-        }
-      });
-
-      maxWidth += 48;
-
-      printContainer.style.width = `${maxWidth}px`;
-      clone.style.width = `${maxWidth}px`;
-
-      const dataUrl = await toJpeg(printContainer, {
-        quality: 0.95,
-        backgroundColor: '#ffffff',
-        pixelRatio: 2,
-        width: maxWidth,
-        filter: (node: any) => {
-          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
-            return false;
-          }
-          return true;
-        },
-      });
-
-      document.body.removeChild(printContainer);
-      
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = `dca_report_${new Date().toISOString().split('T')[0]}.jpg`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      await exportToImageOrPDF(
+        reportRef.current,
+        'jpeg',
+        `dca_report_${new Date().toISOString().split('T')[0]}.jpg`
+      );
     } catch (err) {
-      console.error("Failed to export JPEG", err);
       alert("匯出圖片失敗 (Failed to export image)");
     }
   };
@@ -1099,102 +1029,13 @@ export default function DCARecords() {
   const handleExportPDF = async () => {
     if (!reportRef.current) return;
     try {
-      const printContainer = document.createElement('div');
-      printContainer.style.position = 'absolute';
-      printContainer.style.top = '-9999px';
-      printContainer.style.left = '0';
-      printContainer.style.backgroundColor = '#ffffff';
-      printContainer.style.padding = '24px';
-      printContainer.classList.add('print-force-expand');
-      
-      const clone = reportRef.current.cloneNode(true) as HTMLElement;
-      
-      clone.classList.remove('h-full', 'w-full');
-      clone.style.height = 'auto';
-      clone.style.width = 'max-content';
-      clone.style.minWidth = '100%';
-      
-      const style = document.createElement('style');
-      style.innerHTML = `
-        .print-force-expand * {
-          overflow: visible !important;
-          max-width: none !important;
-          max-height: none !important;
-          backdrop-filter: none !important;
-          -webkit-backdrop-filter: none !important;
-        }
-        .print-force-expand .bg-white\\/80, 
-        .print-force-expand .bg-white\\/50,
-        .print-force-expand .bg-gray-50\\/80,
-        .print-force-expand .bg-blue-50\\/80,
-        .print-force-expand .bg-yellow-50\\/80,
-        .print-force-expand .bg-indigo-50\\/80,
-        .print-force-expand .bg-emerald-50\\/80,
-        .print-force-expand .bg-purple-50\\/80 {
-          background-color: #ffffff !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] {
-          width: max-content !important;
-          min-width: 100% !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] .grid {
-          width: max-content !important;
-          min-width: 100% !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] .grid > div {
-          white-space: nowrap !important;
-        }
-      `;
-      printContainer.appendChild(style);
-      printContainer.appendChild(clone);
-      document.body.appendChild(printContainer);
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      let maxWidth = 1600;
-      const allElements = printContainer.querySelectorAll('*');
-      allElements.forEach(el => {
-        if (el.scrollWidth > maxWidth) {
-          maxWidth = el.scrollWidth;
-        }
-      });
-
-      maxWidth += 48;
-
-      printContainer.style.width = `${maxWidth}px`;
-      clone.style.width = `${maxWidth}px`;
-
-      const dataUrl = await toJpeg(printContainer, {
-        quality: 0.95,
-        backgroundColor: '#ffffff',
-        pixelRatio: 2,
-        width: maxWidth,
-        filter: (node: any) => {
-          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
-            return false;
-          }
-          return true;
-        },
-      });
-
-      document.body.removeChild(printContainer);
-
-      // Create a temporary image to get dimensions
-      const img = new Image();
-      img.src = dataUrl;
-      await new Promise(resolve => img.onload = resolve);
-
-      // Always use landscape for overall report to fit wide tables
-      const pdf = new jsPDF({
-        orientation: 'l',
-        unit: 'px',
-        format: [img.width, img.height]
-      });
-
-      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
-      pdf.save(`dca_report_${new Date().toISOString().split('T')[0]}.pdf`);
+      await exportToImageOrPDF(
+        reportRef.current,
+        'pdf',
+        `dca_report_${new Date().toISOString().split('T')[0]}.pdf`,
+        { pdfOrientation: 'p' }
+      );
     } catch (err) {
-      console.error("Failed to export PDF", err);
       alert("匯出 PDF 失敗 (Failed to export PDF)");
     }
   };
@@ -2021,22 +1862,22 @@ export default function DCARecords() {
               className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-[90vh] overflow-hidden flex flex-col relative"
             >
               <div ref={reportRef} className="flex flex-col h-full bg-white relative" style={{ backgroundColor: '#ffffff', color: '#111827' }}>
-                <div className="p-6 border-b border-gray-100 flex justify-between items-center shrink-0 z-20 bg-white" style={{ backgroundColor: '#f9fafb' }}>
-                  <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                    <FileText className="w-6 h-6 text-blue-600" /> 定投及交易報告 ({selectedCategory})
-                  </h2>
-                  <button
-                    onClick={() => setShowReport(false)}
-                    className="p-2 hover:bg-gray-200 rounded-full transition-colors"
-                    data-html2canvas-ignore="true"
-                  >
-                    <X className="w-6 h-6 text-gray-500" />
-                  </button>
-                </div>
-                
-                <div id="report-scroll-container" className="flex-1 flex flex-col min-h-0 relative z-10">
+                <div id="sim-top-section" className="flex flex-col shrink-0">
+                  <div className="p-6 border-b border-gray-100 flex justify-between items-center z-20 bg-white" style={{ backgroundColor: '#f9fafb' }}>
+                    <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                      <FileText className="w-6 h-6 text-blue-600" /> 定投及交易報告 ({selectedCategory})
+                    </h2>
+                    <button
+                      onClick={() => setShowReport(false)}
+                      className="p-2 hover:bg-gray-200 rounded-full transition-colors"
+                      data-export-ignore="true"
+                    >
+                      <X className="w-6 h-6 text-gray-500" />
+                    </button>
+                  </div>
+                  
                   {/* Chart Section - Fixed */}
-                  <div className="h-64 mb-4 w-full shrink-0 px-6 pt-6">
+                  <div className="h-64 mb-4 w-full px-6 pt-6">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={reportData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
@@ -2070,6 +1911,7 @@ export default function DCARecords() {
                               dot={<CustomDot />} 
                               activeDot={{ r: 6 }}
                               name={isUSStock ? "結餘 (Balance USD)" : "結餘 (Balance)"}
+                              isAnimationActive={false}
                             />
                             <Line 
                               type="monotone" 
@@ -2079,6 +1921,7 @@ export default function DCARecords() {
                               dot={false}
                               activeDot={{ r: 6 }}
                               name={isUSStock ? "總資產價值 (Total Asset Value USD)" : "總資產價值 (Total Asset Value)"}
+                              isAnimationActive={false}
                             />
                           </>
                         ) : (
@@ -2091,6 +1934,7 @@ export default function DCARecords() {
                               dot={<CustomDot />} 
                               activeDot={{ r: 6 }}
                               name={isUSStock ? "股票每月價格 (Monthly Price USD)" : "股票每月價格 (Monthly Price)"}
+                              isAnimationActive={false}
                             />
                             <Line 
                               type="monotone" 
@@ -2100,15 +1944,17 @@ export default function DCARecords() {
                               strokeDasharray="5 5"
                               dot={false}
                               name={isUSStock ? "平均買入價 (Avg Cost USD)" : "平均買入價 (Avg Cost)"}
+                              isAnimationActive={false}
                             />
                           </>
                         )}
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
+                </div>
 
-                  {/* Table Section - Scrollable with Sticky Header */}
-                  <div id="report-table-body" className="flex-1 overflow-auto custom-scrollbar border-t border-gray-100 relative">
+                {/* Table Section - Scrollable with Sticky Header */}
+                <div id="sim-results-wrapper" className="flex-1 overflow-auto custom-scrollbar border-t border-gray-100 relative">
                     <div className="min-w-[1200px]">
                       {/* Table Header */}
                       <div className="sticky top-0 bg-gray-50 border-b border-gray-200 px-6 py-3 z-20">
@@ -2187,7 +2033,6 @@ export default function DCARecords() {
                           ))}
                        </div>
                     </div>
-                  </div>
                   </div>
                 </div>
               </div>

@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { X, FileText, Download } from 'lucide-react';
 import { AppState } from '../store';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { toJpeg } from 'html-to-image';
+import { exportToImageOrPDF } from '../utils/exportUtils';
 import { jsPDF } from 'jspdf';
 
 interface OverallReportModalProps {
@@ -30,102 +30,13 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
   const handleExportPDF = async () => {
     if (!reportRef.current) return;
     try {
-      const printContainer = document.createElement('div');
-      printContainer.style.position = 'absolute';
-      printContainer.style.top = '-9999px';
-      printContainer.style.left = '0';
-      printContainer.style.backgroundColor = '#ffffff';
-      printContainer.style.padding = '24px';
-      printContainer.classList.add('print-force-expand');
-      
-      const clone = reportRef.current.cloneNode(true) as HTMLElement;
-      
-      clone.classList.remove('overflow-hidden', 'max-w-6xl', 'h-[95vh]', 'w-full');
-      clone.style.height = 'auto';
-      clone.style.width = 'max-content';
-      clone.style.minWidth = '100%';
-      
-      const style = document.createElement('style');
-      style.innerHTML = `
-        .print-force-expand * {
-          overflow: visible !important;
-          max-width: none !important;
-          max-height: none !important;
-          backdrop-filter: none !important;
-          -webkit-backdrop-filter: none !important;
-        }
-        .print-force-expand .bg-white\\/80, 
-        .print-force-expand .bg-white\\/50,
-        .print-force-expand .bg-gray-50\\/80,
-        .print-force-expand .bg-blue-50\\/80,
-        .print-force-expand .bg-yellow-50\\/80,
-        .print-force-expand .bg-indigo-50\\/80,
-        .print-force-expand .bg-emerald-50\\/80,
-        .print-force-expand .bg-purple-50\\/80 {
-          background-color: #ffffff !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] {
-          width: max-content !important;
-          min-width: 100% !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] .grid {
-          width: max-content !important;
-          min-width: 100% !important;
-        }
-        .print-force-expand .min-w-\\[1200px\\] .grid > div {
-          white-space: nowrap !important;
-        }
-      `;
-      printContainer.appendChild(style);
-      printContainer.appendChild(clone);
-      document.body.appendChild(printContainer);
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      let maxWidth = 1600;
-      const allElements = printContainer.querySelectorAll('*');
-      allElements.forEach(el => {
-        if (el.scrollWidth > maxWidth) {
-          maxWidth = el.scrollWidth;
-        }
-      });
-
-      maxWidth += 48;
-
-      printContainer.style.width = `${maxWidth}px`;
-      clone.style.width = `${maxWidth}px`;
-
-      const dataUrl = await toJpeg(printContainer, {
-        quality: 0.95,
-        backgroundColor: '#ffffff',
-        pixelRatio: 2,
-        width: maxWidth,
-        filter: (node: any) => {
-          if (node.getAttribute && node.getAttribute('data-html2canvas-ignore')) {
-            return false;
-          }
-          return true;
-        },
-      });
-
-      document.body.removeChild(printContainer);
-
-      // Create a temporary image to get dimensions
-      const img = new Image();
-      img.src = dataUrl;
-      await new Promise(resolve => img.onload = resolve);
-      
-      // Always use landscape for overall report to fit wide tables
-      const pdf = new jsPDF({
-        orientation: 'l',
-        unit: 'px',
-        format: [img.width, img.height]
-      });
-
-      pdf.addImage(dataUrl, 'JPEG', 0, 0, img.width, img.height);
-      pdf.save(`overall_dca_report_${new Date().toISOString().split('T')[0]}.pdf`);
+      await exportToImageOrPDF(
+        reportRef.current,
+        'pdf',
+        `overall_dca_report_${new Date().toISOString().split('T')[0]}.pdf`,
+        { pdfOrientation: 'l' }
+      );
     } catch (err) {
-      console.error("Failed to export PDF", err);
       alert("匯出 PDF 失敗 (Failed to export PDF)");
     }
   };
@@ -363,14 +274,14 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
             <button
               onClick={handleExportPDF}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all text-sm font-bold shadow-md"
-              data-html2canvas-ignore="true"
+              data-export-ignore="true"
             >
               <Download className="w-4 h-4" /> 匯出 PDF
             </button>
             <button
               onClick={onClose}
               className="p-2 hover:bg-gray-200 rounded-full transition-colors"
-              data-html2canvas-ignore="true"
+              data-export-ignore="true"
             >
               <X className="w-6 h-6 text-gray-500" />
             </button>
@@ -459,13 +370,13 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
                     <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
                     {cr.isLiquidity ? (
                       <>
-                        <Line type="monotone" dataKey="currentAssetValue" stroke="#2563eb" strokeWidth={2} dot={<CustomDot />} activeDot={{ r: 6 }} name="結餘 (Balance)" />
-                        <Line type="monotone" dataKey="totalAssetValueWithDividends" stroke="#059669" strokeWidth={2} dot={false} activeDot={{ r: 6 }} name="總資產價值 (Total Asset Value)" />
+                        <Line type="monotone" dataKey="currentAssetValue" stroke="#2563eb" strokeWidth={2} dot={<CustomDot />} activeDot={{ r: 6 }} name="結餘 (Balance)" isAnimationActive={false} />
+                        <Line type="monotone" dataKey="totalAssetValueWithDividends" stroke="#059669" strokeWidth={2} dot={false} activeDot={{ r: 6 }} name="總資產價值 (Total Asset Value)" isAnimationActive={false} />
                       </>
                     ) : (
                       <>
-                        <Line type="monotone" dataKey="price" stroke="#2563eb" strokeWidth={2} dot={<CustomDot />} activeDot={{ r: 6 }} name={`股票每月價格 (Monthly Price${cr.isUSStock ? ' USD' : ''})`} />
-                        <Line type="monotone" dataKey="averageCost" stroke="#9333ea" strokeWidth={2} strokeDasharray="5 5" dot={false} name={`平均買入價 (Avg Cost${cr.isUSStock ? ' USD' : ''})`} />
+                        <Line type="monotone" dataKey="price" stroke="#2563eb" strokeWidth={2} dot={<CustomDot />} activeDot={{ r: 6 }} name={`股票每月價格 (Monthly Price${cr.isUSStock ? ' USD' : ''})`} isAnimationActive={false} />
+                        <Line type="monotone" dataKey="averageCost" stroke="#9333ea" strokeWidth={2} strokeDasharray="5 5" dot={false} name={`平均買入價 (Avg Cost${cr.isUSStock ? ' USD' : ''})`} isAnimationActive={false} />
                       </>
                     )}
                   </LineChart>
