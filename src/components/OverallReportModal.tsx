@@ -69,9 +69,9 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
         displayDate: '初始資金 (Initial)',
         type: 'Initial',
         price: 1,
-        amount: state.initialCashReserve,
-        shares: state.initialCashReserve,
-        totalAmount: state.initialCashReserve,
+        amount: state.initialLiquidityReserve,
+        shares: state.initialLiquidityReserve,
+        totalAmount: state.initialLiquidityReserve,
         dividendPerShare: 0,
       });
 

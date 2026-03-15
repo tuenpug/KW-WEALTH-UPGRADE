@@ -319,30 +319,31 @@ export default function Tracking() {
     const categoryBreakdown: Record<string, { totalValue: number, shares: number, price: number, totalInvested: number, tickerDetails?: Record<string, { totalValue: number, shares: number, price: number, totalInvested: number }> }> = {};
 
     // Calculate dynamic cash reserve up to target month
-    let cashReserve = state.initialCashReserve || 0;
-    let cashReserveInvested = state.initialCashReserve || 0;
+    let globalCash = state.initialCashReserve || 0;
+    let liquidityCash = state.initialLiquidityReserve || 0;
+    let liquidityInvested = state.initialLiquidityReserve || 0;
     relevantDCARecords.forEach(r => {
       if (r.category === "現金儲備／定期" || r.category === "流動資金及定期存款") {
-        cashReserve += r.amount;
-        cashReserveInvested += r.amount;
-        if (r.dividendPerShare) cashReserve += r.dividendPerShare;
+        liquidityCash += r.amount;
+        liquidityInvested += r.amount;
+        if (r.dividendPerShare) liquidityCash += r.dividendPerShare;
       }
       if (r.remainder) {
-        cashReserve += r.remainder;
+        globalCash += r.remainder;
       }
     });
     relevantTradeRecords.forEach(t => {
       if (t.type === 'sell') {
-        cashReserve += t.totalAmount;
+        globalCash += t.totalAmount;
       } else {
-        cashReserve -= t.totalAmount;
+        globalCash -= t.totalAmount;
       }
     });
 
-    categoryBreakdown["現金儲備／定期"] = { totalValue: cashReserve, shares: cashReserve, price: 1, totalInvested: cashReserveInvested };
-    categoryBreakdown["流動資金及定期存款"] = { totalValue: cashReserve, shares: cashReserve, price: 1, totalInvested: cashReserveInvested };
+    categoryBreakdown["現金儲備／定期"] = { totalValue: liquidityCash, shares: liquidityCash, price: 1, totalInvested: liquidityInvested };
+    categoryBreakdown["流動資金及定期存款"] = { totalValue: liquidityCash, shares: liquidityCash, price: 1, totalInvested: liquidityInvested };
 
-    let estimatedAssetValue = cashReserve;
+    let estimatedAssetValue = globalCash + liquidityCash;
 
     categories.forEach(cat => {
       if (cat === "現金儲備／定期" || cat === "流動資金及定期存款") {
@@ -421,7 +422,7 @@ export default function Tracking() {
       estimatedAssetValue += categoryTotalValue;
     });
 
-    const totalInvestedWithInitial = totalInvested + (state.initialCashReserve || 0);
+    const totalInvestedWithInitial = totalInvested + (state.initialCashReserve || 0) + (state.initialLiquidityReserve || 0);
     const growth = totalInvestedWithInitial > 0 ? ((estimatedAssetValue - totalInvestedWithInitial) / totalInvestedWithInitial) * 100 : 0;
 
     return {

@@ -150,6 +150,7 @@ export type AppState = {
   dcaRecords: DCARecord[];
   tradeRecords: TradeRecord[];
   initialCashReserve: number;
+  initialLiquidityReserve: number;
   realTimePrices: Record<string, number>;
 };
 
@@ -170,8 +171,9 @@ type AppContextType = {
   deleteDCARecord: (id: string) => void;
   addTradeRecord: (record: TradeRecord) => void;
   deleteTradeRecord: (id: string) => void;
-  importDCADataset: (dca: DCARecord[], trades: TradeRecord[], initialCash?: number) => void;
+  importDCADataset: (dca: DCARecord[], trades: TradeRecord[], initialCash?: number, initialLiquidity?: number) => void;
   setInitialCashReserve: (amount: number) => void;
+  setInitialLiquidityReserve: (amount: number) => void;
   setRealTimePrice: (category: string, price: number) => void;
 };
 
@@ -213,13 +215,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
           dcaRecords: parsed.dcaRecords || [],
           tradeRecords: parsed.tradeRecords || [],
           initialCashReserve: parsed.initialCashReserve || 0,
+          initialLiquidityReserve: parsed.initialLiquidityReserve || 0,
           realTimePrices: parsed.realTimePrices || {},
         };
       } catch (e) {
         console.error("Failed to parse saved state", e);
       }
     }
-    return { records: [defaultRecord], aiPlan: null, actuals: [], dcaRecords: [], tradeRecords: [], initialCashReserve: 0, realTimePrices: {} };
+    return { records: [defaultRecord], aiPlan: null, actuals: [], dcaRecords: [], tradeRecords: [], initialCashReserve: 0, initialLiquidityReserve: 0, realTimePrices: {} };
   });
 
   useEffect(() => {
@@ -323,17 +326,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
     }));
   };
 
-  const importDCADataset = (dca: DCARecord[], trades: TradeRecord[], initialCash: number = 0) => {
+  const importDCADataset = (dca: DCARecord[], trades: TradeRecord[], initialCash: number = 0, initialLiquidity: number = 0) => {
     setState((prev) => ({
       ...prev,
       dcaRecords: dca,
       tradeRecords: trades,
       initialCashReserve: initialCash,
+      initialLiquidityReserve: initialLiquidity,
     }));
   };
 
   const setInitialCashReserve = (amount: number) => {
     setState((prev) => ({ ...prev, initialCashReserve: amount }));
+  };
+
+  const setInitialLiquidityReserve = (amount: number) => {
+    setState((prev) => ({ ...prev, initialLiquidityReserve: amount }));
   };
 
   const setRealTimePrice = (category: string, price: number) => {
@@ -369,6 +377,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({
         deleteTradeRecord,
         importDCADataset,
         setInitialCashReserve,
+        setInitialLiquidityReserve,
         setRealTimePrice,
       }}
     >

@@ -58,7 +58,7 @@ import {
 import { OverallReportModal } from "../components/OverallReportModal";
 
 export default function DCARecords() {
-  const { state, addOrUpdateDCARecord, deleteDCARecord, addTradeRecord, deleteTradeRecord, importDCADataset, setInitialCashReserve, setRealTimePrice: setGlobalRealTimePrice } = useAppContext();
+  const { state, addOrUpdateDCARecord, deleteDCARecord, addTradeRecord, deleteTradeRecord, importDCADataset, setInitialCashReserve, setInitialLiquidityReserve, setRealTimePrice: setGlobalRealTimePrice } = useAppContext();
   const [showOverallReport, setShowOverallReport] = useState(false);
   
   // --- Categories from AI Plan ---
@@ -736,15 +736,15 @@ export default function DCARecords() {
 
     if (isLiquidity) {
       // For Liquidity tab, we show the global cash ledger
-      // 1. Add initial cash reserve as the first entry
+      // 1. Add initial liquidity reserve as the first entry
       timeline.push({
         date: new Date(state.aiPlan ? state.aiPlan.startYear : new Date().getFullYear(), state.aiPlan ? state.aiPlan.startMonth - 1 : new Date().getMonth(), 1),
         displayDate: '初始資金 (Initial)',
         type: 'Initial',
         price: 1,
-        amount: state.initialCashReserve,
-        shares: state.initialCashReserve,
-        totalAmount: state.initialCashReserve,
+        amount: state.initialLiquidityReserve,
+        shares: state.initialLiquidityReserve,
+        totalAmount: state.initialLiquidityReserve,
         dividendPerShare: 0,
       });
 
@@ -1038,6 +1038,7 @@ export default function DCARecords() {
       dcaRecords: state.dcaRecords,
       tradeRecords: state.tradeRecords,
       initialCashReserve: state.initialCashReserve,
+      initialLiquidityReserve: state.initialLiquidityReserve,
       exportedAt: new Date().toISOString(),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -1064,7 +1065,7 @@ export default function DCARecords() {
       try {
         const json = JSON.parse(event.target?.result as string);
         if (json.dcaRecords && Array.isArray(json.dcaRecords) && json.tradeRecords && Array.isArray(json.tradeRecords)) {
-          importDCADataset(json.dcaRecords, json.tradeRecords, json.initialCashReserve || 0);
+          importDCADataset(json.dcaRecords, json.tradeRecords, json.initialCashReserve || 0, json.initialLiquidityReserve || 0);
           alert("匯入成功！");
         } else {
           alert("檔案格式錯誤 (Invalid File Format)");
@@ -1453,7 +1454,21 @@ export default function DCARecords() {
                  </p>
                </div>
                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-                 <p className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">{isLiquidity ? '總結餘' : '總持貨量'}</p>
+                 <div className="flex justify-between items-center mb-1">
+                   <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">{isLiquidity ? '總結餘' : '總持貨量'}</p>
+                   {isLiquidity && (
+                     <div className="flex items-center gap-1">
+                       <span className="text-[10px] text-gray-400 font-bold">初始: $</span>
+                       <input 
+                         type="number" 
+                         value={state.initialLiquidityReserve || ''} 
+                         onChange={(e) => setInitialLiquidityReserve(Number(e.target.value))}
+                         placeholder="0"
+                         className="w-16 text-xs font-bold text-gray-600 bg-gray-50 border border-gray-200 rounded px-1 py-0.5 focus:ring-1 focus:ring-blue-500"
+                       />
+                     </div>
+                   )}
+                 </div>
                  <p className="text-2xl font-extrabold text-gray-900">{totalSharesHeld.toFixed(2)} {isLiquidity ? '' : <span className="text-sm font-normal text-gray-400">股</span>}</p>
                </div>
                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
