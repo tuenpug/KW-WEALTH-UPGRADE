@@ -63,6 +63,8 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
     
     const timeline: any[] = [];
 
+    const baseCategoryName = category.includes(" - ") ? category.split(" - ")[0] : category;
+
     if (isLiquidity) {
       timeline.push({
         date: new Date(state.aiPlan ? state.aiPlan.startYear : new Date().getFullYear(), state.aiPlan ? state.aiPlan.startMonth - 1 : new Date().getMonth(), 1),
@@ -81,7 +83,13 @@ export const OverallReportModal: React.FC<OverallReportModalProps> = ({ state, c
           date = new Date(r.year, r.month - 1, 15);
         }
         
-        const isRecordLiquidity = r.category === "現金儲備／定期" || r.category === "流動資金及定期存款" || (!r.category && (category === "現金儲備／定期" || category === "流動資金及定期存款"));
+        const rBaseCategory = r.category || "一般定投";
+        const rTicker = r.ticker || "";
+        const rFullCategory = rTicker ? `${rBaseCategory} - ${rTicker}` : rBaseCategory;
+
+        const isRecordLiquidity = rFullCategory === category || 
+                                 (r.category === baseCategoryName && !r.ticker && !category.includes(" - ")) ||
+                                 (!r.category && baseCategoryName === "一般定投");
         
         if (isRecordLiquidity) {
           timeline.push({

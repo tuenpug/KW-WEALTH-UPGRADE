@@ -368,13 +368,20 @@ export default function DCARecords() {
 
   const tradeStats = useMemo(() => {
     let cashReserve = state.initialCashReserve;
-    let liquidityValue = 0;
-    let liquidityInvested = 0;
+    let liquidityValue = isLiquidity ? (state.initialLiquidityReserve || 0) : 0;
+    let liquidityInvested = isLiquidity ? (state.initialLiquidityReserve || 0) : 0;
     
     // Add remainders from ALL DCA records (cash is global)
     state.dcaRecords.forEach(r => {
-      const isRecordLiquidity = r.category === "現金儲備／定期" || r.category === "流動資金及定期存款" || (!r.category && (selectedCategory === "現金儲備／定期" || selectedCategory === "流動資金及定期存款"));
-      if (isRecordLiquidity) {
+      const rBaseCategory = r.category || "一般定投";
+      const rTicker = r.ticker || "";
+      const rFullCategory = rTicker ? `${rBaseCategory} - ${rTicker}` : rBaseCategory;
+
+      const isRecordLiquidity = rFullCategory === selectedCategory || 
+                               (r.category === baseSelectedCategory && !r.ticker && !selectedCategory.includes(" - ")) ||
+                               (!r.category && baseSelectedCategory === "一般定投");
+
+      if (isLiquidity && isRecordLiquidity) {
         liquidityValue += r.amount;
         liquidityInvested += r.amount;
         if (r.dividendPerShare) {
@@ -911,8 +918,8 @@ export default function DCARecords() {
       const id = `${baseCategory}-${selectedYear}-${selectedMonth}-${selectedPeriod}`;
       const existingRecord = state.dcaRecords.find(r => r.id === id);
       
-      // Use global cash reserve as the previous balance for rolling over
-      let previousBalance = tradeStats.cashReserve;
+      // Use the current category's liquidity value as the previous balance for interest calculation
+      let previousBalance = tradeStats.liquidityValue;
       if (existingRecord) {
         previousBalance -= (existingRecord.amount + (existingRecord.dividendPerShare || 0));
       }
