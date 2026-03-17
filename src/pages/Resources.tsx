@@ -28,18 +28,22 @@ import {
 
 // Custom Dot for the chart
 const CustomDot = (props: any) => {
-  const { cx, cy, index, dataLength } = props;
+  const { cx, cy, index, dataLength, payload } = props;
   
   let fill = "#3b82f6"; // Blue (Pure DCA)
   
-  if (index === 0) {
+  if (payload?.actionType === 'HSLB_SELL') {
+    fill = "#e11d48"; // Rose-600 (Sell)
+  } else if (payload?.actionType === 'HSLB_BUY') {
+    fill = "#059669"; // Emerald-600 (Buy)
+  } else if (index === 0) {
     fill = "#06b6d4"; // Blue-Green (Entry)
   } else if (index === dataLength - 1) {
     fill = "#db2777"; // Blue-Red (Exit)
   }
 
   return (
-    <circle cx={cx} cy={cy} r={5} stroke="white" strokeWidth={2} fill={fill} />
+    <circle cx={cx} cy={cy} r={payload?.actionType?.startsWith('HSLB') ? 6 : 5} stroke="white" strokeWidth={2} fill={fill} />
   );
 };
 
@@ -449,6 +453,7 @@ type SimulationResult = {
   price: number;
   monthlyPrincipal: number;
   totalPrincipal: number;
+  outOfPocketPrincipal: number;
   sharesBought: number;
   totalShares: number;
   totalValue: number;
@@ -457,7 +462,17 @@ type SimulationResult = {
   dividendPerShare: number;
   dividendReceived: number;
   accumulatedDividends: number;
-  totalAssetValueWithDividends: number;
+  totalAssetValue: number;
+  
+  // New fields for Lot Size and HSLB
+  availableCash: number;
+  hslbFunds: number;
+  actionType: 'DCA' | 'HSLB_SELL' | 'HSLB_BUY';
+  actionShares: number;
+  actionPrice: number;
+  actionAmount: number;
+  hslbTargetPrice?: number;
+  hslbTriggerReason?: string;
 };
 
 function DCASimulator() {
@@ -469,6 +484,8 @@ function DCASimulator() {
   const [monthlyAmount, setMonthlyAmount] = useState(1000);
   const [durationYears, setDurationYears] = useState(5);
   const [exchangeRate, setExchangeRate] = useState(7.8);
+  const [lotSize, setLotSize] = useState(1);
+  const [highSellLowBuy, setHighSellLowBuy] = useState<number>(0);
 
   const isUSStock = useMemo(() => {
     return /^[A-Za-z]/.test(ticker);
@@ -710,50 +727,67 @@ function DCASimulator() {
       }
 
       let totalPrincipal = 0;
+      let outOfPocketPrincipal = 0;
       let totalShares = 0;
       let accumulatedDividends = 0;
+      let availableCash = 0;
+      let waitingToBuyBack = false;
+      let soldFunds = 0;
+      let sellPrice = 0;
+      let averageCost = 0;
+
       const simResults: SimulationResult[] = [];
       
-      const simEvents: { date: Date, type: 'purchase' | 'dividend', data: any }[] = [];
-      
+      // Map purchases by dateStr
+      const purchaseMap = new Map<string, any>();
       for (const p of purchases) {
-        simEvents.push({ date: p.actualDate, type: 'purchase', data: p });
+        purchaseMap.set(p.actualDateStr, p);
       }
-      
-      dividendMap.forEach((amount, dateStr) => {
-        const divDate = new Date(dateStr);
-        if (purchases.length > 0 && divDate >= purchases[0].actualDate && divDate <= now) {
-          simEvents.push({ date: divDate, type: 'dividend', data: { amount } });
-        }
-      });
-      
-      simEvents.sort((a, b) => {
-        const timeDiff = a.date.getTime() - b.date.getTime();
-        if (timeDiff !== 0) return timeDiff;
-        if (a.type === 'dividend' && b.type === 'purchase') return -1;
-        if (a.type === 'purchase' && b.type === 'dividend') return 1;
-        return 0;
-      });
 
       let periodDividendPerShare = 0;
       let periodDividendReceived = 0;
-      
-      for (const ev of simEvents) {
-        if (ev.type === 'dividend') {
-          const amount = ev.data.amount;
+
+      // Find the start index in dailyData
+      let startIndex = 0;
+      if (purchases.length > 0) {
+        startIndex = dailyData.findIndex((d: any) => d.dateStr === purchases[0].actualDateStr);
+        if (startIndex === -1) startIndex = 0;
+      }
+
+      for (let i = startIndex; i < dailyData.length; i++) {
+        const day = dailyData[i];
+        if (day.date > now) break;
+
+        // 1. Process Dividends
+        if (day.dividend > 0) {
+          const amount = day.dividend;
           periodDividendPerShare += amount;
           const received = totalShares * amount;
           periodDividendReceived += received;
           accumulatedDividends += received;
-        } else if (ev.type === 'purchase') {
-          const p = ev.data;
-          totalPrincipal += effectiveMonthlyAmount;
-          totalShares += p.shares;
+        }
+
+        // 2. Process DCA Purchase
+        const p = purchaseMap.get(day.dateStr);
+        if (p) {
+          availableCash += effectiveMonthlyAmount;
+          outOfPocketPrincipal += effectiveMonthlyAmount;
           
+          const lotsToBuy = Math.floor(availableCash / (p.price * lotSize));
+          const sharesBought = lotsToBuy * lotSize;
+          const cost = sharesBought * p.price;
+          
+          availableCash -= cost;
+          totalPrincipal += cost;
+          totalShares += sharesBought;
+          
+          if (totalShares > 0) {
+            averageCost = totalPrincipal / totalShares;
+          }
+
           const valuationPrice = timingStrategy === 'start_of_month' ? p.price : p.targetPrice;
           const totalValue = totalShares * valuationPrice;
-          const averageCost = totalPrincipal / totalShares;
-          const percentageDiff = ((valuationPrice - averageCost) / averageCost) * 100;
+          const percentageDiff = averageCost > 0 ? ((valuationPrice - averageCost) / averageCost) * 100 : 0;
           
           simResults.push({
             year: p.targetDate.getFullYear(),
@@ -762,7 +796,8 @@ function DCASimulator() {
             price: p.price,
             monthlyPrincipal: effectiveMonthlyAmount,
             totalPrincipal,
-            sharesBought: p.shares,
+            outOfPocketPrincipal,
+            sharesBought,
             totalShares,
             totalValue,
             averageCost,
@@ -770,11 +805,136 @@ function DCASimulator() {
             dividendPerShare: periodDividendPerShare,
             dividendReceived: periodDividendReceived,
             accumulatedDividends,
-            totalAssetValueWithDividends: totalValue + accumulatedDividends
+            totalAssetValue: totalValue + accumulatedDividends + availableCash + soldFunds,
+            availableCash,
+            hslbFunds: soldFunds,
+            actionType: 'DCA',
+            actionShares: sharesBought,
+            actionPrice: p.price,
+            actionAmount: cost
           });
           
           periodDividendPerShare = 0;
           periodDividendReceived = 0;
+        }
+
+        // 3. Process HSLB (High Sell Low Buy)
+        if (highSellLowBuy > 0 && totalShares > 0 && averageCost > 0) {
+          if (!waitingToBuyBack) {
+            // Check if we should sell
+            const sellTarget = averageCost * (1 + highSellLowBuy / 100);
+            if (day.close >= sellTarget) {
+              // Sell 30% of total shares
+              const sharesToSell = Math.floor((totalShares * 0.3) / lotSize) * lotSize;
+              if (sharesToSell > 0) {
+                const sellAmount = sharesToSell * day.close;
+                
+                // Update state
+                totalShares -= sharesToSell;
+                totalPrincipal -= averageCost * sharesToSell; // Reduce principal proportionally
+                if (totalShares === 0) averageCost = 0;
+                
+                waitingToBuyBack = true;
+                sellPrice = day.close;
+                soldFunds = sellAmount;
+
+                const totalValue = totalShares * day.close;
+                const percentageDiff = averageCost > 0 ? ((day.close - averageCost) / averageCost) * 100 : 0;
+
+                simResults.push({
+                  year: day.date.getFullYear(),
+                  month: day.date.getMonth() + 1,
+                  actualDate: day.dateStr,
+                  price: day.close,
+                  monthlyPrincipal: 0,
+                  totalPrincipal,
+                  sharesBought: 0,
+                  totalShares,
+                  totalValue,
+                  averageCost,
+                  percentageDiff,
+                  dividendPerShare: 0,
+                  dividendReceived: 0,
+                  accumulatedDividends,
+                  totalAssetValue: totalValue + accumulatedDividends + availableCash + soldFunds,
+                  availableCash,
+                  hslbFunds: soldFunds,
+                  outOfPocketPrincipal,
+                  actionType: 'HSLB_SELL',
+                  actionShares: sharesToSell,
+                  actionPrice: day.close,
+                  actionAmount: sellAmount,
+                  hslbTargetPrice: sellTarget
+                });
+              }
+            }
+          } else {
+            // Check if we should buy back
+            const buyTargetSellPrice = sellPrice * (1 - highSellLowBuy / 100);
+            const buyTargetAvgCost = averageCost * (1 - highSellLowBuy / 100);
+            let triggeredTarget = 0;
+            let triggerReason = '';
+            
+            if (day.close <= buyTargetSellPrice || day.close <= buyTargetAvgCost) {
+              if (day.close <= buyTargetSellPrice && day.close <= buyTargetAvgCost) {
+                triggeredTarget = Math.max(buyTargetSellPrice, buyTargetAvgCost);
+                triggerReason = triggeredTarget === buyTargetSellPrice ? '賣出價' : '平均購入價';
+              } else if (day.close <= buyTargetSellPrice) {
+                triggeredTarget = buyTargetSellPrice;
+                triggerReason = '賣出價';
+              } else {
+                triggeredTarget = buyTargetAvgCost;
+                triggerReason = '平均購入價';
+              }
+              
+              const lotsToBuy = Math.floor(soldFunds / (day.close * lotSize));
+              const sharesBought = lotsToBuy * lotSize;
+              
+              if (sharesBought > 0) {
+                const cost = sharesBought * day.close;
+                
+                // Update state
+                totalShares += sharesBought;
+                totalPrincipal += cost;
+                averageCost = totalPrincipal / totalShares;
+                
+                availableCash += (soldFunds - cost); // Remainder goes to available cash
+                waitingToBuyBack = false;
+                soldFunds = 0;
+                sellPrice = 0;
+
+                const totalValue = totalShares * day.close;
+                const percentageDiff = averageCost > 0 ? ((day.close - averageCost) / averageCost) * 100 : 0;
+
+                simResults.push({
+                  year: day.date.getFullYear(),
+                  month: day.date.getMonth() + 1,
+                  actualDate: day.dateStr,
+                  price: day.close,
+                  monthlyPrincipal: 0,
+                  totalPrincipal,
+                  sharesBought,
+                  totalShares,
+                  totalValue,
+                  averageCost,
+                  percentageDiff,
+                  dividendPerShare: 0,
+                  dividendReceived: 0,
+                  accumulatedDividends,
+                  totalAssetValue: totalValue + accumulatedDividends + availableCash + soldFunds,
+                  availableCash,
+                  hslbFunds: soldFunds,
+                  outOfPocketPrincipal,
+                  actionType: 'HSLB_BUY',
+                  actionShares: sharesBought,
+                  actionPrice: day.close,
+                  actionAmount: cost,
+                  hslbTargetPrice: triggeredTarget,
+                  hslbTriggerReason: triggerReason
+                });
+              }
+            }
+          }
         }
       }
 
@@ -782,7 +942,7 @@ function DCASimulator() {
         // Update the last result with any dividends that occurred after the last purchase
         const lastResult = simResults[simResults.length - 1];
         lastResult.accumulatedDividends = accumulatedDividends;
-        lastResult.totalAssetValueWithDividends = lastResult.totalValue + accumulatedDividends;
+        lastResult.totalAssetValue = lastResult.totalValue + accumulatedDividends + lastResult.availableCash + lastResult.hslbFunds;
       }
 
       if (simResults.length === 0) {
@@ -960,6 +1120,42 @@ function DCASimulator() {
             />
           </div>
         </div>
+
+        <div className="group/input">
+          <label className="block text-sm font-semibold text-gray-700 mb-2 ml-1">
+            每手股份
+          </label>
+          <div className="relative transform transition-all duration-200 group-focus-within/input:-translate-y-1">
+            <input
+              type="number"
+              value={lotSize}
+              onChange={(e) => setLotSize(Number(e.target.value))}
+              min="1"
+              className="block w-full px-4 py-3.5 bg-gray-50/50 border border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-gray-900 font-medium shadow-sm"
+            />
+          </div>
+        </div>
+
+        <div className="group/input">
+          <label className="block text-sm font-semibold text-gray-700 mb-2 ml-1">
+            高賣低買模擬
+          </label>
+          <div className="relative transform transition-all duration-200 group-focus-within/input:-translate-y-1">
+            <select
+              value={highSellLowBuy}
+              onChange={(e) => setHighSellLowBuy(Number(e.target.value))}
+              className="block w-full px-4 py-3.5 bg-gray-50/50 border border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-gray-900 font-medium appearance-none shadow-sm"
+            >
+              <option value={0}>不作高賣低買</option>
+              <option value={10}>＋／－10％高賣低買</option>
+              <option value={20}>＋／－20％高賣低買</option>
+              <option value={30}>＋／－30％高賣低買</option>
+            </select>
+            <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-gray-500">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </div>
+          </div>
+        </div>
       </div>
 
       <button
@@ -1008,12 +1204,12 @@ function DCASimulator() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
                 <div className="bg-gray-50/80 p-5 rounded-2xl border border-gray-100 hover:bg-white hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-gray-500 mb-1 font-medium">總投入本金</p>
                   <p className="text-2xl font-bold text-gray-900 tracking-tight">
-                    ${results[results.length - 1].totalPrincipal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {isUSStock && <span className="text-sm font-normal text-gray-500 ml-1 block">(HKD ${(results[results.length - 1].totalPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
+                    ${results[results.length - 1].outOfPocketPrincipal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-gray-500 ml-1 block">(HKD ${(results[results.length - 1].outOfPocketPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
                 <div className="bg-blue-50/80 p-5 rounded-2xl border border-blue-100 hover:bg-blue-50 hover:shadow-md transition-all shadow-sm">
@@ -1030,17 +1226,24 @@ function DCASimulator() {
                     {isUSStock && <span className="text-sm font-normal text-yellow-600 ml-1 block">(HKD ${(results[results.length - 1].accumulatedDividends * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
+                <div className="bg-teal-50/80 p-5 rounded-2xl border border-teal-100 hover:bg-teal-50 hover:shadow-md transition-all shadow-sm">
+                  <p className="text-sm text-teal-600 mb-1 font-medium">剩餘現金</p>
+                  <p className="text-2xl font-bold text-teal-700 tracking-tight">
+                    ${(results[results.length - 1].availableCash + results[results.length - 1].hslbFunds).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-teal-500 ml-1 block">(HKD ${((results[results.length - 1].availableCash + results[results.length - 1].hslbFunds) * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
+                  </p>
+                </div>
                 <div className="bg-indigo-50/80 p-5 rounded-2xl border border-indigo-100 hover:bg-indigo-50 hover:shadow-md transition-all shadow-sm">
-                  <p className="text-sm text-indigo-600 mb-1 font-medium">總收益</p>
+                  <p className="text-sm text-indigo-600 mb-1 font-medium">總資產總值</p>
                   <p className="text-2xl font-bold text-indigo-700 tracking-tight">
-                    ${results[results.length - 1].totalAssetValueWithDividends.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {isUSStock && <span className="text-sm font-normal text-indigo-500 ml-1 block">(HKD ${(results[results.length - 1].totalAssetValueWithDividends * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
+                    ${results[results.length - 1].totalAssetValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-indigo-500 ml-1 block">(HKD ${(results[results.length - 1].totalAssetValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
                 <div className="bg-emerald-50/80 p-5 rounded-2xl border border-emerald-100 hover:bg-emerald-50 hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-emerald-600 mb-1 font-medium">總回報率 (含息)</p>
                   <p className="text-2xl font-bold text-emerald-700 tracking-tight">
-                    {(((results[results.length - 1].totalAssetValueWithDividends / results[results.length - 1].totalPrincipal) - 1) * 100).toFixed(2)}%
+                    {(((results[results.length - 1].totalAssetValue / results[results.length - 1].outOfPocketPrincipal) - 1) * 100).toFixed(2)}%
                   </p>
                 </div>
                 <div className="bg-purple-50/80 p-5 rounded-2xl border border-purple-100 hover:bg-purple-50 hover:shadow-md transition-all shadow-sm">
@@ -1150,11 +1353,12 @@ function DCASimulator() {
                     />
                     <Line 
                       type="monotone" 
-                      dataKey="totalAssetValueWithDividends" 
+                      dataKey="totalAssetValue" 
                       stroke="#059669" 
                       strokeWidth={2} 
-                      dot={false}
-                      name={isUSStock ? "總資產價值 (Total Asset Value USD)" : "總資產價值 (Total Asset Value)"}
+                      dot={(props) => <CustomDot {...props} dataLength={results.length} />}
+                      activeDot={{ r: 6, strokeWidth: 0 }}
+                      name={isUSStock ? "總資產總值 (Total Asset Value USD)" : "總資產總值 (Total Asset Value)"}
                       isAnimationActive={false}
                     />
                   </LineChart>
@@ -1169,60 +1373,90 @@ function DCASimulator() {
                     <tr>
                       <th className="px-6 py-4 font-semibold">年月</th>
                       <th className="px-6 py-4 font-semibold">實際交易日</th>
+                      <th className="px-6 py-4 font-semibold">操作</th>
                       <th className="px-6 py-4 font-semibold text-right">{isUSStock ? '股價 (USD)' : '股價'}</th>
                       <th className="px-6 py-4 font-semibold text-right">平均成本</th>
                       <th className="px-6 py-4 font-semibold text-right">現價差幅</th>
                       <th className="px-6 py-4 font-semibold text-right">每月投入</th>
                       <th className="px-6 py-4 font-semibold text-right">累積本金</th>
-                      <th className="px-6 py-4 font-semibold text-right">新增股數</th>
+                      <th className="px-6 py-4 font-semibold text-right">操作股數</th>
                       <th className="px-6 py-4 font-semibold text-right">累積股數</th>
+                      <th className="px-6 py-4 font-semibold text-right">可用資金</th>
+                      <th className="px-6 py-4 font-semibold text-right">待買回資金</th>
                       <th className="px-6 py-4 font-semibold text-right">當月派息</th>
                       <th className="px-6 py-4 font-semibold text-right">當時總資產</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {results.map((r, i) => (
-                      <tr key={i} className="hover:bg-blue-50/30 transition-colors group">
-                        <td className="px-6 py-4 font-medium text-gray-900">
-                          {r.year}年{r.month}月
-                        </td>
-                        <td className="px-6 py-4 text-gray-500">{r.actualDate}</td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">
-                          ${r.price.toFixed(2)}
-                          {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.price * exchangeRate).toFixed(2)}</div>}
-                        </td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">
-                          ${r.averageCost.toFixed(2)}
-                          {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.averageCost * exchangeRate).toFixed(2)}</div>}
-                        </td>
-                        <td className={`px-6 py-4 text-right font-mono font-bold ${r.percentageDiff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {r.percentageDiff > 0 ? '+' : ''}{r.percentageDiff.toFixed(2)}%
-                        </td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">
-                          ${r.monthlyPrincipal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                          {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.monthlyPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
-                        </td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">
-                          ${r.totalPrincipal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                          {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.totalPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
-                        </td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">{r.sharesBought.toFixed(4)}</td>
-                        <td className="px-6 py-4 text-right font-mono text-gray-600">{r.totalShares.toFixed(4)}</td>
-                        <td className="px-6 py-4 text-right font-mono text-yellow-600 font-medium">
-                          {r.dividendReceived > 0 ? (
-                            <span>
-                              +${r.dividendReceived.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                              <span className="text-xs text-gray-500 ml-1">(${r.dividendPerShare.toFixed(3)}/股)</span>
-                              {isUSStock && <div className="text-[10px] text-yellow-500 font-normal">HKD ${(r.dividendReceived * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
-                            </span>
-                          ) : '-'}
-                        </td>
-                        <td className="px-6 py-4 text-right font-mono font-bold text-blue-600 group-hover:text-blue-700">
-                          ${r.totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                          {isUSStock && <div className="text-[10px] text-blue-400 font-normal">HKD ${(r.totalValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
-                        </td>
-                      </tr>
-                    ))}
+                    {results.map((r, i) => {
+                      let rowBg = "hover:bg-blue-50/30";
+                      let actionText = "定投";
+                      let actionColor = "text-blue-600";
+                      
+                      if (r.actionType === 'HSLB_SELL') {
+                        rowBg = "bg-rose-50/50 hover:bg-rose-100/50";
+                        actionText = `高賣 (達標 ${r.hslbTargetPrice?.toFixed(2)})`;
+                        actionColor = "text-rose-600 font-bold";
+                      } else if (r.actionType === 'HSLB_BUY') {
+                        rowBg = "bg-emerald-50/50 hover:bg-emerald-100/50";
+                        actionText = `低買 (${r.hslbTriggerReason} ${r.hslbTargetPrice?.toFixed(2)})`;
+                        actionColor = "text-emerald-600 font-bold";
+                      }
+
+                      return (
+                        <tr key={i} className={`${rowBg} transition-colors group`}>
+                          <td className="px-6 py-4 font-medium text-gray-900">
+                            {r.year}年{r.month}月
+                          </td>
+                          <td className="px-6 py-4 text-gray-500">{r.actualDate}</td>
+                          <td className={`px-6 py-4 text-xs ${actionColor}`}>{actionText}</td>
+                          <td className="px-6 py-4 text-right font-mono text-gray-600">
+                            ${r.price.toFixed(2)}
+                            {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.price * exchangeRate).toFixed(2)}</div>}
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono text-gray-600">
+                            ${r.averageCost.toFixed(2)}
+                            {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.averageCost * exchangeRate).toFixed(2)}</div>}
+                          </td>
+                          <td className={`px-6 py-4 text-right font-mono font-bold ${r.percentageDiff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {r.percentageDiff > 0 ? '+' : ''}{r.percentageDiff.toFixed(2)}%
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono text-gray-600">
+                            ${r.monthlyPrincipal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.monthlyPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono text-gray-600">
+                            ${r.outOfPocketPrincipal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.outOfPocketPrincipal * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                          </td>
+                          <td className={`px-6 py-4 text-right font-mono ${r.actionType === 'HSLB_SELL' ? 'text-rose-600' : 'text-gray-600'}`}>
+                            {r.actionType === 'HSLB_SELL' ? '-' : '+'}{r.actionShares.toFixed(4)}
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono text-gray-600">{r.totalShares.toFixed(4)}</td>
+                          <td className="px-6 py-4 text-right font-mono text-gray-600">
+                            ${r.availableCash.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.availableCash * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono text-gray-600">
+                            ${r.hslbFunds.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            {isUSStock && <div className="text-[10px] text-gray-400">HKD ${(r.hslbFunds * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono text-yellow-600 font-medium">
+                            {r.dividendReceived > 0 ? (
+                              <span>
+                                +${r.dividendReceived.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                <span className="text-xs text-gray-500 ml-1">(${r.dividendPerShare.toFixed(3)}/股)</span>
+                                {isUSStock && <div className="text-[10px] text-yellow-500 font-normal">HKD ${(r.dividendReceived * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                              </span>
+                            ) : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-right font-mono font-bold text-blue-600 group-hover:text-blue-700">
+                            ${r.totalAssetValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            {isUSStock && <div className="text-[10px] text-blue-400 font-normal">HKD ${(r.totalAssetValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
