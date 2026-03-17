@@ -731,9 +731,8 @@ function DCASimulator() {
       let totalShares = 0;
       let accumulatedDividends = 0;
       let availableCash = 0;
-      let waitingToBuyBack = false;
-      let soldFunds = 0;
-      let sellPrice = 0;
+      let hslbStack: { sellPrice: number; funds: number; tier: number }[] = [];
+      let totalHslbFunds = 0;
       let averageCost = 0;
 
       const simResults: SimulationResult[] = [];
@@ -805,9 +804,9 @@ function DCASimulator() {
             dividendPerShare: periodDividendPerShare,
             dividendReceived: periodDividendReceived,
             accumulatedDividends,
-            totalAssetValue: totalValue + accumulatedDividends + availableCash + soldFunds,
+            totalAssetValue: totalValue + accumulatedDividends + availableCash + totalHslbFunds,
             availableCash,
-            hslbFunds: soldFunds,
+            hslbFunds: totalHslbFunds,
             actionType: 'DCA',
             actionShares: sharesBought,
             actionPrice: p.price,
@@ -820,74 +819,19 @@ function DCASimulator() {
 
         // 3. Process HSLB (High Sell Low Buy)
         if (highSellLowBuy > 0 && totalShares > 0 && averageCost > 0) {
-          if (!waitingToBuyBack) {
-            // Check if we should sell
-            const sellTarget = averageCost * (1 + highSellLowBuy / 100);
-            if (day.close >= sellTarget) {
-              // Sell 30% of total shares
-              const sharesToSell = Math.floor((totalShares * 0.3) / lotSize) * lotSize;
-              if (sharesToSell > 0) {
-                const sellAmount = sharesToSell * day.close;
-                
-                // Update state
-                totalShares -= sharesToSell;
-                totalPrincipal -= averageCost * sharesToSell; // Reduce principal proportionally
-                if (totalShares === 0) averageCost = 0;
-                
-                waitingToBuyBack = true;
-                sellPrice = day.close;
-                soldFunds = sellAmount;
-
-                const totalValue = totalShares * day.close;
-                const percentageDiff = averageCost > 0 ? ((day.close - averageCost) / averageCost) * 100 : 0;
-
-                simResults.push({
-                  year: day.date.getFullYear(),
-                  month: day.date.getMonth() + 1,
-                  actualDate: day.dateStr,
-                  price: day.close,
-                  monthlyPrincipal: 0,
-                  totalPrincipal,
-                  sharesBought: 0,
-                  totalShares,
-                  totalValue,
-                  averageCost,
-                  percentageDiff,
-                  dividendPerShare: 0,
-                  dividendReceived: 0,
-                  accumulatedDividends,
-                  totalAssetValue: totalValue + accumulatedDividends + availableCash + soldFunds,
-                  availableCash,
-                  hslbFunds: soldFunds,
-                  outOfPocketPrincipal,
-                  actionType: 'HSLB_SELL',
-                  actionShares: sharesToSell,
-                  actionPrice: day.close,
-                  actionAmount: sellAmount,
-                  hslbTargetPrice: sellTarget
-                });
-              }
-            }
-          } else {
-            // Check if we should buy back
-            const buyTargetSellPrice = sellPrice * (1 - highSellLowBuy / 100);
-            const buyTargetAvgCost = averageCost * (1 - highSellLowBuy / 100);
+          // Check if we should buy back
+          while (hslbStack.length > 0) {
+            const topSell = hslbStack[hslbStack.length - 1];
+            // 低買價格為賣出價的回調一半 (例如 10% 高賣，則 5% 低買 -> 95%)
+            const buyTargetSellPrice = topSell.sellPrice * (1 - (highSellLowBuy / 2) / 100);
             let triggeredTarget = 0;
             let triggerReason = '';
             
-            if (day.close <= buyTargetSellPrice || day.close <= buyTargetAvgCost) {
-              if (day.close <= buyTargetSellPrice && day.close <= buyTargetAvgCost) {
-                triggeredTarget = Math.max(buyTargetSellPrice, buyTargetAvgCost);
-                triggerReason = triggeredTarget === buyTargetSellPrice ? '賣出價' : '平均購入價';
-              } else if (day.close <= buyTargetSellPrice) {
-                triggeredTarget = buyTargetSellPrice;
-                triggerReason = '賣出價';
-              } else {
-                triggeredTarget = buyTargetAvgCost;
-                triggerReason = '平均購入價';
-              }
+            if (day.close <= buyTargetSellPrice) {
+              triggeredTarget = buyTargetSellPrice;
+              triggerReason = '賣出價';
               
-              const lotsToBuy = Math.floor(soldFunds / (day.close * lotSize));
+              const lotsToBuy = Math.floor(topSell.funds / (day.close * lotSize));
               const sharesBought = lotsToBuy * lotSize;
               
               if (sharesBought > 0) {
@@ -898,10 +842,9 @@ function DCASimulator() {
                 totalPrincipal += cost;
                 averageCost = totalPrincipal / totalShares;
                 
-                availableCash += (soldFunds - cost); // Remainder goes to available cash
-                waitingToBuyBack = false;
-                soldFunds = 0;
-                sellPrice = 0;
+                availableCash += (topSell.funds - cost); // Remainder goes to available cash
+                totalHslbFunds -= topSell.funds;
+                hslbStack.pop();
 
                 const totalValue = totalShares * day.close;
                 const percentageDiff = averageCost > 0 ? ((day.close - averageCost) / averageCost) * 100 : 0;
@@ -913,6 +856,7 @@ function DCASimulator() {
                   price: day.close,
                   monthlyPrincipal: 0,
                   totalPrincipal,
+                  outOfPocketPrincipal,
                   sharesBought,
                   totalShares,
                   totalValue,
@@ -921,10 +865,9 @@ function DCASimulator() {
                   dividendPerShare: 0,
                   dividendReceived: 0,
                   accumulatedDividends,
-                  totalAssetValue: totalValue + accumulatedDividends + availableCash + soldFunds,
+                  totalAssetValue: totalValue + accumulatedDividends + availableCash + totalHslbFunds,
                   availableCash,
-                  hslbFunds: soldFunds,
-                  outOfPocketPrincipal,
+                  hslbFunds: totalHslbFunds,
                   actionType: 'HSLB_BUY',
                   actionShares: sharesBought,
                   actionPrice: day.close,
@@ -932,7 +875,79 @@ function DCASimulator() {
                   hslbTargetPrice: triggeredTarget,
                   hslbTriggerReason: triggerReason
                 });
+              } else {
+                // Not enough funds to buy even 1 lot, return funds to available cash
+                availableCash += topSell.funds;
+                totalHslbFunds -= topSell.funds;
+                hslbStack.pop();
               }
+            } else {
+              break; // Top of stack didn't trigger buyback, so lower tiers won't either
+            }
+          }
+
+          // Check if we should sell
+          while (hslbStack.length < 2) {
+            let sellTarget = 0;
+            let sellPercentage = 0;
+            let tier = 1;
+            
+            if (hslbStack.length === 0) {
+              sellTarget = averageCost * (1 + highSellLowBuy / 100);
+              sellPercentage = 0.3;
+              tier = 1;
+            } else if (hslbStack.length === 1) {
+              sellTarget = hslbStack[0].sellPrice * (1 + highSellLowBuy / 100);
+              sellPercentage = 0.15;
+              tier = 2;
+            }
+            
+            if (day.close >= sellTarget) {
+              const sharesToSell = Math.floor((totalShares * sellPercentage) / lotSize) * lotSize;
+              if (sharesToSell > 0) {
+                const sellAmount = sharesToSell * day.close;
+                
+                // Update state
+                totalShares -= sharesToSell;
+                totalPrincipal -= averageCost * sharesToSell; // Reduce principal proportionally
+                if (totalShares === 0) averageCost = 0;
+                
+                hslbStack.push({ sellPrice: day.close, funds: sellAmount, tier });
+                totalHslbFunds += sellAmount;
+
+                const totalValue = totalShares * day.close;
+                const percentageDiff = averageCost > 0 ? ((day.close - averageCost) / averageCost) * 100 : 0;
+
+                simResults.push({
+                  year: day.date.getFullYear(),
+                  month: day.date.getMonth() + 1,
+                  actualDate: day.dateStr,
+                  price: day.close,
+                  monthlyPrincipal: 0,
+                  totalPrincipal,
+                  outOfPocketPrincipal,
+                  sharesBought: 0,
+                  totalShares,
+                  totalValue,
+                  averageCost,
+                  percentageDiff,
+                  dividendPerShare: 0,
+                  dividendReceived: 0,
+                  accumulatedDividends,
+                  totalAssetValue: totalValue + accumulatedDividends + availableCash + totalHslbFunds,
+                  availableCash,
+                  hslbFunds: totalHslbFunds,
+                  actionType: 'HSLB_SELL',
+                  actionShares: sharesToSell,
+                  actionPrice: day.close,
+                  actionAmount: sellAmount,
+                  hslbTargetPrice: sellTarget
+                });
+              } else {
+                break; // Not enough shares to sell
+              }
+            } else {
+              break; // Target not met
             }
           }
         }
@@ -1147,9 +1162,9 @@ function DCASimulator() {
               className="block w-full px-4 py-3.5 bg-gray-50/50 border border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-gray-900 font-medium appearance-none shadow-sm"
             >
               <option value={0}>不作高賣低買</option>
-              <option value={10}>＋／－10％高賣低買</option>
-              <option value={20}>＋／－20％高賣低買</option>
-              <option value={30}>＋／－30％高賣低買</option>
+              <option value={10}>+10% 高賣 / -5% 低買</option>
+              <option value={20}>+20% 高賣 / -10% 低買</option>
+              <option value={30}>+30% 高賣 / -15% 低買</option>
             </select>
             <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-gray-500">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -1395,11 +1410,11 @@ function DCASimulator() {
                       
                       if (r.actionType === 'HSLB_SELL') {
                         rowBg = "bg-rose-50/50 hover:bg-rose-100/50";
-                        actionText = `高賣 (達標 ${r.hslbTargetPrice?.toFixed(2)})`;
+                        actionText = `高賣 (+${highSellLowBuy}% 達標 ${r.hslbTargetPrice?.toFixed(2)})`;
                         actionColor = "text-rose-600 font-bold";
                       } else if (r.actionType === 'HSLB_BUY') {
                         rowBg = "bg-emerald-50/50 hover:bg-emerald-100/50";
-                        actionText = `低買 (${r.hslbTriggerReason} ${r.hslbTargetPrice?.toFixed(2)})`;
+                        actionText = `低買 (-${highSellLowBuy / 2}% 達標 ${r.hslbTargetPrice?.toFixed(2)})`;
                         actionColor = "text-emerald-600 font-bold";
                       }
 
