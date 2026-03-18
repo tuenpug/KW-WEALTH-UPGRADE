@@ -12,6 +12,7 @@ import {
   Legend,
   ResponsiveContainer,
   Dot,
+  Brush,
 } from "recharts";
 import {
   Calculator,
@@ -1321,6 +1322,16 @@ function DCASimulator() {
                       name={isUSStock ? "平均成本 (Avg Cost USD)" : "平均成本 (Avg Cost)"}
                       isAnimationActive={false}
                     />
+                    <Brush 
+                      dataKey="actualDate" 
+                      height={20} 
+                      stroke="#94a3b8" 
+                      fill="#f8fafc"
+                      tickFormatter={(dateStr) => {
+                         const date = new Date(dateStr);
+                         return `${date.getFullYear()}-${date.getMonth() + 1}`;
+                      }}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -1371,10 +1382,20 @@ function DCASimulator() {
                       dataKey="totalAssetValue" 
                       stroke="#059669" 
                       strokeWidth={2} 
-                      dot={(props) => <CustomDot {...props} dataLength={results.length} />}
+                      dot={false}
                       activeDot={{ r: 6, strokeWidth: 0 }}
                       name={isUSStock ? "總資產總值 (Total Asset Value USD)" : "總資產總值 (Total Asset Value)"}
                       isAnimationActive={false}
+                    />
+                    <Brush 
+                      dataKey="actualDate" 
+                      height={20} 
+                      stroke="#94a3b8" 
+                      fill="#f8fafc"
+                      tickFormatter={(dateStr) => {
+                         const date = new Date(dateStr);
+                         return `${date.getFullYear()}-${date.getMonth() + 1}`;
+                      }}
                     />
                   </LineChart>
                 </ResponsiveContainer>
