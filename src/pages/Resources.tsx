@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
   Dot,
   Brush,
+  ReferenceDot,
 } from "recharts";
 import {
   Calculator,
@@ -503,6 +504,8 @@ function DCASimulator() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [results, setResults] = useState<SimulationResult[]>([]);
+  const [customTargetPrice, setCustomTargetPrice] = useState<number | null>(null);
+  const [defaultTargetPrice, setDefaultTargetPrice] = useState<number>(0);
   const [simulatedTicker, setSimulatedTicker] = useState("");
   const [simulatedStockName, setSimulatedStockName] = useState("");
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -965,6 +968,10 @@ function DCASimulator() {
         throw new Error("所選時間範圍內沒有足夠的歷史數據。");
       }
 
+      const finalPrice = simResults[simResults.length - 1].price;
+      setDefaultTargetPrice(finalPrice);
+      setCustomTargetPrice(null);
+
       setResults(simResults);
       setSimulatedTicker(ticker.toUpperCase());
       setSimulatedStockName(fetchedStockName);
@@ -974,6 +981,26 @@ function DCASimulator() {
       setLoading(false);
     }
   };
+
+  const lastResult = results.length > 0 ? results[results.length - 1] : null;
+  const effectiveTargetPrice = customTargetPrice !== null ? customTargetPrice : defaultTargetPrice;
+  const targetStockValue = lastResult ? lastResult.totalShares * effectiveTargetPrice : 0;
+  const targetTotalAssetValue = lastResult ? targetStockValue + lastResult.accumulatedDividends + lastResult.availableCash + lastResult.hslbFunds : 0;
+  const targetReturnRate = lastResult && lastResult.outOfPocketPrincipal > 0 
+    ? ((targetTotalAssetValue - lastResult.outOfPocketPrincipal) / lastResult.outOfPocketPrincipal) * 100 
+    : 0;
+
+  const chartDataWithTarget = useMemo(() => {
+    if (!results.length) return [];
+    const newData = [...results];
+    const lastIndex = newData.length - 1;
+    newData[lastIndex] = {
+      ...newData[lastIndex],
+      targetPrice: effectiveTargetPrice,
+      targetTotalAssetValue: targetTotalAssetValue
+    };
+    return newData;
+  }, [results, effectiveTargetPrice, targetTotalAssetValue]);
 
   return (
     <div className="bg-white/80 backdrop-blur-xl p-8 rounded-3xl shadow-lg border border-white/20 mt-8 relative overflow-hidden group hover:shadow-xl transition-all duration-300">
@@ -1220,6 +1247,33 @@ function DCASimulator() {
                 </button>
               </div>
 
+              <div className="mb-6 bg-yellow-50/50 p-4 rounded-2xl border border-yellow-100 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm" data-export-ignore="true">
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-semibold text-gray-700">目標價格估算：</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                    <input
+                      type="number"
+                      value={effectiveTargetPrice}
+                      onChange={(e) => setCustomTargetPrice(Number(e.target.value))}
+                      className="pl-7 pr-4 py-2 w-32 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all font-mono"
+                      step="0.01"
+                    />
+                  </div>
+                  {customTargetPrice !== null && customTargetPrice !== defaultTargetPrice && (
+                    <button
+                      onClick={() => setCustomTargetPrice(null)}
+                      className="px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors"
+                    >
+                      還原
+                    </button>
+                  )}
+                </div>
+                <div className="text-sm text-gray-500">
+                  預設為期末價格: <span className="font-mono">${defaultTargetPrice.toFixed(2)}</span>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
                 <div className="bg-gray-50/80 p-5 rounded-2xl border border-gray-100 hover:bg-white hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-gray-500 mb-1 font-medium">總投入本金</p>
@@ -1231,8 +1285,8 @@ function DCASimulator() {
                 <div className="bg-blue-50/80 p-5 rounded-2xl border border-blue-100 hover:bg-blue-50 hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-blue-600 mb-1 font-medium">總股票價值</p>
                   <p className="text-2xl font-bold text-blue-700 tracking-tight">
-                    ${results[results.length - 1].totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {isUSStock && <span className="text-sm font-normal text-blue-500 ml-1 block">(HKD ${(results[results.length - 1].totalValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
+                    ${targetStockValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-blue-500 ml-1 block">(HKD ${(targetStockValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
                 <div className="bg-yellow-50/80 p-5 rounded-2xl border border-yellow-100 hover:bg-yellow-50 hover:shadow-md transition-all shadow-sm">
@@ -1252,14 +1306,14 @@ function DCASimulator() {
                 <div className="bg-indigo-50/80 p-5 rounded-2xl border border-indigo-100 hover:bg-indigo-50 hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-indigo-600 mb-1 font-medium">總資產總值</p>
                   <p className="text-2xl font-bold text-indigo-700 tracking-tight">
-                    ${results[results.length - 1].totalAssetValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    {isUSStock && <span className="text-sm font-normal text-indigo-500 ml-1 block">(HKD ${(results[results.length - 1].totalAssetValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
+                    ${targetTotalAssetValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {isUSStock && <span className="text-sm font-normal text-indigo-500 ml-1 block">(HKD ${(targetTotalAssetValue * exchangeRate).toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                   </p>
                 </div>
                 <div className="bg-emerald-50/80 p-5 rounded-2xl border border-emerald-100 hover:bg-emerald-50 hover:shadow-md transition-all shadow-sm">
                   <p className="text-sm text-emerald-600 mb-1 font-medium">總回報率 (含息)</p>
                   <p className="text-2xl font-bold text-emerald-700 tracking-tight">
-                    {(((results[results.length - 1].totalAssetValue / results[results.length - 1].outOfPocketPrincipal) - 1) * 100).toFixed(2)}%
+                    {targetReturnRate.toFixed(2)}%
                   </p>
                 </div>
                 <div className="bg-purple-50/80 p-5 rounded-2xl border border-purple-100 hover:bg-purple-50 hover:shadow-md transition-all shadow-sm">
@@ -1273,7 +1327,7 @@ function DCASimulator() {
               <div className="h-64 mb-8 w-full">
                 <h4 className="text-sm font-semibold text-gray-500 mb-2">股價 vs 平均成本 (Stock Price vs Avg Cost)</h4>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={results} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                  <LineChart data={chartDataWithTarget} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
                     <XAxis 
                       dataKey="actualDate" 
@@ -1322,6 +1376,15 @@ function DCASimulator() {
                       name={isUSStock ? "平均成本 (Avg Cost USD)" : "平均成本 (Avg Cost)"}
                       isAnimationActive={false}
                     />
+                    <Line 
+                      type="monotone" 
+                      dataKey="targetPrice" 
+                      stroke="transparent" 
+                      dot={{ r: 6, fill: "#eab308", stroke: "#ca8a04", strokeWidth: 2 }} 
+                      activeDot={false}
+                      name={isUSStock ? "目標價格 (Target Price USD)" : "目標價格 (Target Price)"}
+                      isAnimationActive={false}
+                    />
                     <Brush 
                       dataKey="actualDate" 
                       height={20} 
@@ -1339,7 +1402,7 @@ function DCASimulator() {
               <div className="h-64 mb-8 w-full">
                 <h4 className="text-sm font-semibold text-gray-500 mb-2">總資產價值 vs 股票價值 (Total Asset Value vs Stock Value)</h4>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={results} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                  <LineChart data={chartDataWithTarget} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
                     <XAxis 
                       dataKey="actualDate" 
@@ -1385,6 +1448,15 @@ function DCASimulator() {
                       dot={false}
                       activeDot={{ r: 6, strokeWidth: 0 }}
                       name={isUSStock ? "總資產總值 (Total Asset Value USD)" : "總資產總值 (Total Asset Value)"}
+                      isAnimationActive={false}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="targetTotalAssetValue" 
+                      stroke="transparent" 
+                      dot={{ r: 6, fill: "#eab308", stroke: "#ca8a04", strokeWidth: 2 }} 
+                      activeDot={false}
+                      name={isUSStock ? "目標總資產 (Target Asset Value USD)" : "目標總資產 (Target Asset Value)"}
                       isAnimationActive={false}
                     />
                     <Brush 
