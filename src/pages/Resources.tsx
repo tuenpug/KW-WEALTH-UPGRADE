@@ -14,6 +14,9 @@ import {
   Dot,
   Brush,
   ReferenceDot,
+  BarChart,
+  Bar,
+  Cell,
 } from "recharts";
 import {
   Calculator,
@@ -992,7 +995,17 @@ function DCASimulator() {
 
   const chartDataWithTarget = useMemo(() => {
     if (!results.length) return [];
-    const newData = [...results];
+    const newData = results.map((item, index) => {
+      let priceChangePercent = 0;
+      if (index > 0) {
+        const prevPrice = results[index - 1].price;
+        priceChangePercent = prevPrice > 0 ? ((item.price - prevPrice) / prevPrice) * 100 : 0;
+      }
+      return {
+        ...item,
+        priceChangePercent
+      };
+    });
     const lastIndex = newData.length - 1;
     newData[lastIndex] = {
       ...newData[lastIndex],
@@ -1470,6 +1483,61 @@ function DCASimulator() {
                       }}
                     />
                   </LineChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="h-64 mb-8 w-full">
+                <h4 className="text-sm font-semibold text-gray-500 mb-2">與上月股價的百分比差 (MoM Price Change %)</h4>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartDataWithTarget} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                    <XAxis 
+                      dataKey="actualDate" 
+                      tickFormatter={(dateStr) => {
+                         const date = new Date(dateStr);
+                         return `${date.getFullYear()}-${date.getMonth() + 1}`;
+                      }}
+                      tick={{ fontSize: 10, fill: '#6b7280' }} 
+                      axisLine={false} 
+                      tickLine={false} 
+                      interval="preserveStartEnd"
+                      minTickGap={30}
+                    />
+                    <YAxis 
+                      tick={{ fontSize: 10, fill: '#6b7280' }} 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tickFormatter={(value) => `${value}%`}
+                      domain={['auto', 'auto']}
+                      width={80}
+                    />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
+                      formatter={(value: number) => [`${value.toFixed(2)}%`, '']}
+                      labelStyle={{ color: '#374151', fontWeight: 'bold' }}
+                      labelFormatter={(label) => label}
+                    />
+                    <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+                    <Bar 
+                      dataKey="priceChangePercent" 
+                      name={isUSStock ? "與上月股價的百分比差 (MoM Price Change %)" : "與上月股價的百分比差"}
+                      isAnimationActive={false}
+                    >
+                      {chartDataWithTarget.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.priceChangePercent >= 0 ? '#10b981' : '#ef4444'} />
+                      ))}
+                    </Bar>
+                    <Brush 
+                      dataKey="actualDate" 
+                      height={20} 
+                      stroke="#94a3b8" 
+                      fill="#f8fafc"
+                      tickFormatter={(dateStr) => {
+                         const date = new Date(dateStr);
+                         return `${date.getFullYear()}-${date.getMonth() + 1}`;
+                      }}
+                    />
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
