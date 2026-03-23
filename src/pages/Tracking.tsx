@@ -396,7 +396,9 @@ export default function Tracking() {
           price = sorted.length > 0 ? sorted[0].price : 0;
         }
 
-        const totalValue = totalShares * price;
+        const isUSStock = /^[A-Za-z]/.test(ticker);
+        const exchangeRate = isUSStock ? 7.8 : 1;
+        const totalValue = totalShares * price * exchangeRate;
         categoryTotalValue += totalValue;
         categoryTotalShares += totalShares;
         categoryTotalInvested += totalInvestedForTicker;
@@ -801,12 +803,6 @@ export default function Tracking() {
                                       <p className={`text-xs font-bold mb-1 ${(actualTotalValue - (catStats.totalInvested || 0)) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>回報（＋／－）</p>
                                       <p className={`text-sm font-bold ${(actualTotalValue - (catStats.totalInvested || 0)) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
                                         {(actualTotalValue - (catStats.totalInvested || 0)) >= 0 ? '+' : ''}{Math.round(actualTotalValue - (catStats.totalInvested || 0)).toLocaleString()}
-                                      </p>
-                                    </div>
-                                    <div className={`px-3 py-2 rounded-lg border ${gap >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
-                                      <p className={`text-xs font-bold mb-1 ${gap >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>該月該股票目標總額與現實差距（＋／－）</p>
-                                      <p className={`text-sm font-bold ${gap >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                        {gap >= 0 ? '+' : ''}{Math.round(gap).toLocaleString()}
                                       </p>
                                     </div>
                                   </>

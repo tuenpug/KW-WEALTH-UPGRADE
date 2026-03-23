@@ -16,7 +16,7 @@ import {
   ReferenceDot,
   BarChart,
   Bar,
-  Cell,
+  Rectangle,
 } from "recharts";
 import {
   Calculator,
@@ -1522,11 +1522,12 @@ function DCASimulator() {
                       dataKey="priceChangePercent" 
                       name={isUSStock ? "與上月股價的百分比差 (MoM Price Change %)" : "與上月股價的百分比差"}
                       isAnimationActive={false}
-                    >
-                      {chartDataWithTarget.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.priceChangePercent >= 0 ? '#10b981' : '#ef4444'} />
-                      ))}
-                    </Bar>
+                      shape={(props: any) => {
+                        const { payload, ...rest } = props;
+                        const fill = payload.priceChangePercent >= 0 ? '#10b981' : '#ef4444';
+                        return <Rectangle {...rest} fill={fill} />;
+                      }}
+                    />
                     <Brush 
                       dataKey="actualDate" 
                       height={20} 
