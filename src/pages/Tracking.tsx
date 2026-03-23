@@ -289,22 +289,8 @@ export default function Tracking() {
 
     const totalInvested = relevantDCARecords.reduce((acc, r) => acc + r.amount, 0);
 
-    // Get actual record for the target month to check for manual prices
-    const actualRecord = state.actuals.find(a => a.id === targetId);
-    const manualPrices: Record<string, number> = {};
-    if (actualRecord && actualRecord.actualAllocations) {
-      actualRecord.actualAllocations.forEach(a => {
-        if (a.price !== undefined) {
-          manualPrices[a.category] = a.price;
-        }
-      });
-    }
-    // Also check current unsaved actualAllocations for live updates in modal
-    actualAllocations.forEach(a => {
-      if (a.price !== undefined) {
-        manualPrices[a.category] = a.price;
-      }
-    });
+    // Use real-time prices from state
+    const manualPrices = state.realTimePrices || {};
 
     // Calculate shares and value per category
     const categories = Array.from(new Set([
@@ -418,7 +404,14 @@ export default function Tracking() {
         tickerDetails[ticker] = { totalValue, shares: totalShares, price, totalInvested: totalInvestedForTicker };
       });
 
-      categoryBreakdown[cat] = { totalValue: categoryTotalValue, shares: categoryTotalShares, price: 0, totalInvested: categoryTotalInvested, tickerDetails };
+      let categoryPrice = 0;
+      if (tickers.length === 1) {
+        categoryPrice = tickerDetails[tickers[0]].price;
+      } else if (categoryTotalShares > 0) {
+        categoryPrice = categoryTotalValue / categoryTotalShares;
+      }
+
+      categoryBreakdown[cat] = { totalValue: categoryTotalValue, shares: categoryTotalShares, price: categoryPrice, totalInvested: categoryTotalInvested, tickerDetails };
       estimatedAssetValue += categoryTotalValue;
     });
 
@@ -778,26 +771,28 @@ export default function Tracking() {
                                   </p>
                                   <p className="text-sm font-bold text-gray-900">${getAmountForDate(alloc, selectedMonth!).toLocaleString() || "0"}</p>
                                 </div>
-                                <div className="bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
-                                  <p className="text-xs text-emerald-600 font-bold mb-1">
-                                    {alloc.category === "現金儲備／定期" || alloc.category === "流動資金及定期存款" ? "該月理想剩餘資金" : "該月理想該項投資工具總值"}
-                                  </p>
-                                  <p className="text-sm font-bold text-emerald-700">${Math.round(expectedTotal).toLocaleString()}</p>
-                                </div>
+                                {alloc.category !== "現金儲備／定期" && alloc.category !== "流動資金及定期存款" && (
+                                  <div className="bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
+                                    <p className="text-xs text-emerald-600 font-bold mb-1">
+                                      該月理想該項投資工具總值
+                                    </p>
+                                    <p className="text-sm font-bold text-emerald-700">${Math.round(expectedTotal).toLocaleString()}</p>
+                                  </div>
+                                )}
                                 <div className="bg-blue-50 px-3 py-2 rounded-lg border border-blue-100">
                                   <p className="text-xs text-blue-600 font-bold mb-1">
                                     {alloc.category === "現金儲備／定期" || alloc.category === "流動資金及定期存款" ? "實際投入資金" : "實際定投額"}
                                   </p>
                                   <p className="text-sm font-bold text-blue-700">${actualAlloc?.amount?.toLocaleString() || "0"}</p>
                                 </div>
-                                <div className="bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100">
-                                  <p className="text-xs text-indigo-600 font-bold mb-1">
-                                    {alloc.category === "現金儲備／定期" || alloc.category === "流動資金及定期存款" ? "實際剩餘現金儲備" : "實際投資工具總值"}
-                                  </p>
-                                  <p className="text-sm font-bold text-indigo-700">${Math.round(actualTotalValue).toLocaleString()}</p>
-                                </div>
                                 {alloc.category !== "現金儲備／定期" && alloc.category !== "流動資金及定期存款" && (
                                   <>
+                                    <div className="bg-indigo-50 px-3 py-2 rounded-lg border border-indigo-100">
+                                      <p className="text-xs text-indigo-600 font-bold mb-1">
+                                        實際投資工具總值
+                                      </p>
+                                      <p className="text-sm font-bold text-indigo-700">${Math.round(actualTotalValue).toLocaleString()}</p>
+                                    </div>
                                     <div className="bg-purple-50 px-3 py-2 rounded-lg border border-purple-100">
                                       <p className="text-xs text-purple-600 font-bold mb-1">總投入資產</p>
                                       <p className="text-sm font-bold text-purple-700">${Math.round(catStats.totalInvested || 0).toLocaleString()}</p>
@@ -808,14 +803,14 @@ export default function Tracking() {
                                         {(actualTotalValue - (catStats.totalInvested || 0)) >= 0 ? '+' : ''}{Math.round(actualTotalValue - (catStats.totalInvested || 0)).toLocaleString()}
                                       </p>
                                     </div>
+                                    <div className={`px-3 py-2 rounded-lg border ${gap >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
+                                      <p className={`text-xs font-bold mb-1 ${gap >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>該月該股票目標總額與現實差距（＋／－）</p>
+                                      <p className={`text-sm font-bold ${gap >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                        {gap >= 0 ? '+' : ''}{Math.round(gap).toLocaleString()}
+                                      </p>
+                                    </div>
                                   </>
                                 )}
-                                <div className={`px-3 py-2 rounded-lg border ${gap >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
-                                  <p className={`text-xs font-bold mb-1 ${gap >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>目標與現實差距（＋／－）</p>
-                                  <p className={`text-sm font-bold ${gap >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                    {gap >= 0 ? '+' : ''}{Math.round(gap).toLocaleString()}
-                                  </p>
-                                </div>
                               </div>
                             </div>
                           </div>
@@ -867,32 +862,8 @@ export default function Tracking() {
                                             </div>
                                             <div className="flex items-center gap-4">
                                               <div className="flex-1">
-                                                <label className="block text-xs font-bold text-gray-500 mb-1">股票現價</label>
-                                                <div className="relative">
-                                                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 font-bold">$</span>
-                                                  <input
-                                                    type="number"
-                                                    value={tickerActualAlloc?.price || ""}
-                                                    onChange={(e) => {
-                                                      const newAllocs = [...(actualAllocations || [])];
-                                                      const existingIdx = newAllocs.findIndex(
-                                                        (a) => a.category === manualPriceKey,
-                                                      );
-                                                      if (existingIdx >= 0) {
-                                                        newAllocs[existingIdx].price = Number(e.target.value);
-                                                      } else {
-                                                        newAllocs.push({
-                                                          category: manualPriceKey,
-                                                          amount: 0,
-                                                          price: Number(e.target.value)
-                                                        });
-                                                      }
-                                                      setActualAllocations(newAllocs);
-                                                    }}
-                                                    className="pl-7 bg-gray-50 border border-gray-200 text-gray-900 text-sm font-bold rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 block w-full p-2 transition-all"
-                                                    placeholder={details.price.toString()}
-                                                  />
-                                                </div>
+                                                <p className="text-xs text-gray-500 font-bold mb-1">股票現價</p>
+                                                <p className="text-sm font-bold text-gray-900">${details.price.toFixed(2)}</p>
                                               </div>
                                               <div className="flex-1 text-right">
                                                 <p className="text-xs text-gray-500 font-bold mb-1">持有股數</p>
@@ -907,36 +878,14 @@ export default function Tracking() {
                                 }
 
                                 return (
-                                  <div className="mt-2">
-                                    <label className="block text-xs font-bold text-gray-500 mb-1">股票現價 (用作計算實際總值)</label>
-                                    <div className="relative max-w-xs">
-                                      <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-gray-400 font-bold">
-                                        $
-                                      </span>
-                                      <input
-                                        type="number"
-                                        value={actualAlloc?.price || ""}
-                                        onChange={(e) => {
-                                          const newAllocs = [...(actualAllocations || [])];
-                                          const existingIdx = newAllocs.findIndex(
-                                            (a) => a.category === alloc.category,
-                                          );
-                                          if (existingIdx >= 0) {
-                                            newAllocs[existingIdx].price = Number(
-                                              e.target.value,
-                                            );
-                                          } else {
-                                            newAllocs.push({
-                                              category: alloc.category,
-                                              amount: 0,
-                                              price: Number(e.target.value)
-                                            });
-                                          }
-                                          setActualAllocations(newAllocs);
-                                        }}
-                                        className="pl-8 bg-white border border-gray-200 text-gray-900 text-sm font-bold rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 block w-full p-3 transition-all group-hover:border-emerald-200"
-                                        placeholder="現時價格"
-                                      />
+                                  <div className="mt-2 flex items-center gap-4">
+                                    <div className="flex-1">
+                                      <p className="text-xs text-gray-500 font-bold mb-1">現價</p>
+                                      <p className="text-sm font-bold text-gray-900">${catStats.price.toFixed(2)}</p>
+                                    </div>
+                                    <div className="flex-1 text-right">
+                                      <p className="text-xs text-gray-500 font-bold mb-1">持有股數</p>
+                                      <p className="text-sm font-bold text-gray-900">{catStats.shares.toFixed(4)}</p>
                                     </div>
                                   </div>
                                 );
